@@ -1,0 +1,248 @@
+import pytest
+from fastapi.testclient import TestClient
+import main
+from database import clear_users_table, clear_safes_table
+
+
+client = TestClient(main.app)
+
+
+@pytest.fixture(
+    autouse=True
+)  # autouse means that between every test , this reset ode will run again
+def reset_state():
+    main.next_account_id = 1
+    main.next_audit_log_id = 1
+
+    clear_users_table()
+    clear_safes_table()
+
+    main.safe_members.clear()
+    main.accounts.clear()
+    main.account_secrets.clear()
+    main.audit_logs.clear()
+
+    yield  # means till here the reset test code
+
+
+# helper function:
+def create_user(username: str, role: str, password: str):
+    return client.post(
+        "/users",
+        json={"username": username, "role": role, "password": password},
+    )
+
+
+def create_admin():
+    return create_user("Ori", "admin", "123456")
+
+
+def create_operator():
+    return create_user("Bob", "operator", "123456")
+
+
+def create_auditor():
+    return create_user("Dana", "auditor", "123456")
+
+
+def create_safe_as_admin(
+    name: str = "Production Linux Servers",
+    safe_type: str = "linux_accounts",
+    description: str = "Privileged Linux accounts",
+):
+    return client.post(
+        "/safes",
+        headers={"x-user-id": "u_1"},
+        json={
+            "name": name,
+            "safe_type": safe_type,
+            "description": description,
+        },
+    )
+
+
+def add_member_as_admin(
+    safe_id: str = "s_1", user_id: str = "u_2", permission_level: str = "use"
+):
+    return client.post(
+        f"/safes/{safe_id}/members",
+        headers={"x-user-id": "u_1"},
+        json={"user_id": user_id, "permission_level": permission_level},
+    )
+
+
+def create_account_as_admin(
+    safe_id: str,
+    target: str = "prod-linux-01",
+    platform: str = "linux_ssh",
+    secret_value: str = "fake-root-secret",
+    username: str = "root",
+):
+    return client.post(
+        f"/safes/{safe_id}/accounts",
+        headers={"x-user-id": "u_1"},
+        json={
+            "username": username,
+            "target": target,
+            "platform": platform,
+            "secret_value": secret_value,
+        },
+    )
+
+
+def test_get_health():
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+def test_create_admin_user():
+    response = client.post(
+        "/users",
+        json={"username": "ori", "role": "admin", "password": "123456"},
+    )
+    assert response.status_code == 200
+    assert response.json() == {
+        "id": "u_1",
+        "username": "ori",
+        "role": "admin",
+        "state": "active",
+    }
+
+
+def test_create_safe_without_header():
+    create_admin()
+    response = client.post(
+        "/safes",
+        json={
+            "name": "Production Linux Servers",
+            "safe_type": "linux_accounts",
+            "description": "Privileged Linux accounts",
+        },
+    )
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Missing X-User-Id header"
+
+
+def test_admin_can_create_safe():
+    create_admin()
+    response = create_safe_as_admin()
+    assert response.status_code == 200
+    assert response.json() == {
+        "id": "s_1",
+        "name": "Production Linux Servers",
+        "safe_type": "linux_accounts",
+        "description": "Privileged Linux accounts",
+    }
+
+
+def test_operator_cant_create_safe():
+    create_operator()
+    response = client.post(
+        "/safes",
+        headers={"x-user-id": "u_1"},
+        json={
+            "id": "s_1",
+            "name": "Production Linux Servers",
+            "safe_type": "linux_accounts",
+            "description": "Privileged Linux accounts",
+        },
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Only admin can create safe"
+
+
+def test_operator_with_read_cant_retrieve_secret():
+    create_admin()
+    create_operator()
+    create_safe_as_admin()
+    create_account_as_admin(safe_id="s_1")
+    add_member_as_admin(permission_level="read")
+    response = client.post(
+        "/safes/s_1/accounts/a_1/retrieve",
+        headers={"x-user-id": "u_2"},
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Unauthorized"
+
+    logs_response = client.get(
+        "/audit-logs",
+        headers={"x-user-id": "u_1"},
+    )
+
+    assert logs_response.status_code == 200
+    logs = logs_response.json()
+    assert len(logs) == 1
+    assert logs[0]["actor_user_id"] == "u_2"
+    assert logs[0]["id"] == "log_1"
+    assert logs[0]["action"] == "retrieve_secret"
+    assert logs[0]["safe_id"] == "s_1"
+    assert logs[0]["account_id"] == "a_1"
+    assert logs[0]["success"] is False
+    assert (
+        logs[0]["message"]
+        == "Unauthorized u_2 tried to retrieved secret for account a_1"
+    )
+
+
+def test_admin_can_retrieve_secret():
+    create_admin()
+    create_operator()
+    create_safe_as_admin()
+    create_account_as_admin(safe_id="s_1")
+    response = client.post(
+        "/safes/s_1/accounts/a_1/retrieve",
+        headers={"x-user-id": "u_1"},
+    )
+    assert response.status_code == 200
+    assert response.json() == {
+        "account_id": "a_1",
+        "secret_value": "fake-root-secret",
+        "secret_version": 1,
+    }
+    logs_response = client.get(
+        "/audit-logs",
+        headers={"x-user-id": "u_1"},
+    )
+    assert logs_response.status_code == 200
+
+    logs = logs_response.json()
+    assert len(logs) == 1
+    assert logs[0]["actor_user_id"] == "u_1"
+    assert logs[0]["id"] == "log_1"
+    assert logs[0]["action"] == "retrieve_secret"
+    assert logs[0]["safe_id"] == "s_1"
+    assert logs[0]["account_id"] == "a_1"
+    assert logs[0]["success"] is True
+    assert logs[0]["message"] == "u_1 retrieved secret for account a_1 from safe s_1"
+
+
+def test_operator_with_use_permission_can_retrieve_secret():
+    create_admin()
+    create_operator()
+    create_safe_as_admin()
+    create_account_as_admin(safe_id="s_1")
+    add_member_as_admin(permission_level="use")
+
+    response = client.post(
+        "/safes/s_1/accounts/a_1/retrieve",
+        headers={"x-user-id": "u_2"},
+    )
+    assert response.status_code == 200
+    assert response.json() == {
+        "account_id": "a_1",
+        "secret_value": "fake-root-secret",
+        "secret_version": 1,
+    }
+
+    logs_response = client.get(
+        "/audit-logs",
+        headers={"x-user-id": "u_1"},
+    )
+
+    assert logs_response.json()[0]["success"] is True
+    assert (
+        logs_response.json()[0]["message"]
+        == "u_2 retrieved secret for account a_1 from safe s_1"
+    )
+    assert logs_response.json()[0]["action"] == "retrieve_secret"
