@@ -21,6 +21,7 @@ def reset_state():
     main.accounts.clear()
     main.account_secrets.clear()
     main.audit_logs.clear()
+    main.token_store.clear()
 
     yield  # means till here the reset test code
 
@@ -45,6 +46,24 @@ def create_auditor():
     return create_user("Dana", "auditor", "123456")
 
 
+def auth_header_for_admin() -> dict[str, str]:
+    login_response = login(username="Ori", password="123456")
+    token = login_response.json()["access_token"]
+
+    return {
+        "Authorization": f"Bearer {token}",
+    }
+
+
+def auth_header(username: str, password: str = "123456") -> dict[str, str]:
+    login_response = login(username=username, password=password)
+    token = login_response.json()["access_token"]
+
+    return {
+        "Authorization": f"Bearer {token}",
+    }
+
+
 def create_safe_as_admin(
     name: str = "Production Linux Servers",
     safe_type: str = "linux_accounts",
@@ -52,11 +71,21 @@ def create_safe_as_admin(
 ):
     return client.post(
         "/safes",
-        headers={"x-user-id": "u_1"},
+        headers=auth_header_for_admin(),
         json={
             "name": name,
             "safe_type": safe_type,
             "description": description,
+        },
+    )
+
+
+def login(username: str = "Ori", password: str = "123456"):
+    return client.post(
+        "/login",
+        json={
+            "username": username,
+            "password": password,
         },
     )
 
@@ -121,7 +150,7 @@ def test_create_safe_without_header():
         },
     )
     assert response.status_code == 401
-    assert response.json()["detail"] == "Missing X-User-Id header"
+    assert response.json()["detail"] == "Missing authorization header"
 
 
 def test_admin_can_create_safe():
@@ -140,7 +169,7 @@ def test_operator_cant_create_safe():
     create_operator()
     response = client.post(
         "/safes",
-        headers={"x-user-id": "u_1"},
+        headers=auth_header(username="Bob"),
         json={
             "id": "s_1",
             "name": "Production Linux Servers",
@@ -246,3 +275,60 @@ def test_operator_with_use_permission_can_retrieve_secret():
         == "u_2 retrieved secret for account a_1 from safe s_1"
     )
     assert logs_response.json()[0]["action"] == "retrieve_secret"
+
+
+def test_login_return_token():
+    create_admin()
+    response = login()
+    assert response.status_code == 200
+    assert response.json() == {"access_token": "token_u_1", "token_type": "bearer"}
+
+
+def test_me_with_valid_token():
+    create_admin()
+    login_request = login()
+    login_data = login_request.json()
+    token = login_data["access_token"]
+    response = client.get("/me", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
+    assert response.json() == {
+        "id": "u_1",
+        "username": "Ori",
+        "role": "admin",
+        "state": "active",
+    }
+
+
+def test_me_without_token_return_401():
+    response = client.get("/me")
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Missing authorization header"
+
+
+def test_admin_can_get_safes_with_token():
+    create_admin()
+    login_request = login()
+    login_token = login_request.json()["access_token"]
+    create_safe_as_admin()
+    response = client.get(
+        "/safes",
+        headers={"Authorization": f"Bearer {login_token}"},
+    )
+    assert response.status_code == 200
+    assert response.json() == [
+        {
+            "id": "s_1",
+            "name": "Production Linux Servers",
+            "safe_type": "linux_accounts",
+            "description": "Privileged Linux accounts",
+        }
+    ]
+
+
+def test_me_invalid_token_get_401():
+    response = client.get(
+        "/me",
+        headers={"Authorization": "Bearer Bad_token"},
+    )
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Wrong or expired token"

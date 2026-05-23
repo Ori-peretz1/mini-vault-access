@@ -1,4 +1,5 @@
-from fastapi import FastAPI, HTTPException, Header
+from fastapi import FastAPI, HTTPException, Header, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import hashlib
 import os
 from models import (
@@ -39,14 +40,16 @@ next_audit_log_id = 1  # step 6
 
 
 safe_members: dict[tuple[str, str], SafeMemberResponse] = {}
-# users: dict[str, UserResponse] = {}
-# safes: dict[str, SafeResponse] = {}
+
 
 accounts: dict[str, AccountResponse] = {}  # metadata - step 5 (of safe)
 account_secrets: dict[str, str] = {}  # sensitive info - step 5
 
 audit_logs: dict[str, AuditLogResponse] = {}
-
+Token = str
+UserId = str
+token_store: dict[Token, UserId] = {}  # step 9 tokens - from token to user id
+bearer_scheme = HTTPBearer(auto_error=False)
 
 app = FastAPI(title="Mini vault access project")
 db_init()
@@ -61,6 +64,25 @@ def check_current_user(x_user_id: str | None) -> UserResponse:
     if user_response.state != UserState.active:
         raise HTTPException(status_code=403, detail="user is not active")
     return user_response
+
+
+def check_current_user_by_token(
+    credentials: HTTPAuthorizationCredentials | None,
+) -> UserResponse:
+    if credentials is None:
+        raise HTTPException(status_code=401, detail="Missing authorization header")
+    if credentials.scheme.lower() != "bearer":
+        raise HTTPException(status_code=401, detail="Token type not compatible")
+    token = credentials.credentials
+    if token not in token_store:
+        raise HTTPException(status_code=401, detail="Wrong or expired token")
+    user_id = token_store[token]
+    user = get_user_from_db(user_id)
+    if user is None:
+        raise HTTPException(status_code=401, detail="User does'nt exist")
+    if user.state != UserState.active:
+        raise HTTPException(status_code=403, detail="User is inactive")
+    return user
 
 
 def hash_password(password: str) -> tuple[str, str]:  # helper function step 9
@@ -95,8 +117,8 @@ def verify_password(
     return password_hash.hex() == stored_hash_hex
 
 
-def user_is_admin(x_user_id: str) -> None:
-    if get_user_from_db(x_user_id).role != UserRole.admin:
+def user_is_admin(user: UserResponse) -> None:
+    if user.role != UserRole.admin:
         raise HTTPException(status_code=403, detail="Only admin can create safe")
 
 
@@ -142,6 +164,13 @@ def can_retrieve_secret(
             return True
 
     return False
+
+
+@app.get("/me")
+def get_user_by_token(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+) -> UserResponse:
+    return check_current_user_by_token(credentials)
 
 
 @app.post(
@@ -346,8 +375,8 @@ def add_member_to_safe(
     member: SafeMemberCreate,
     x_user_id: (str | None) = Header(default=None),
 ) -> SafeMemberResponse:
-    check_current_user(x_user_id)
-    user_is_admin(x_user_id)
+    user = check_current_user(x_user_id)
+    user_is_admin(user)
     if get_safe_from_db(safe_id) is None:
         raise HTTPException(
             status_code=404,  # the resource doesnt exist
@@ -377,10 +406,11 @@ def add_member_to_safe(
 
 @app.post("/safes")
 def create_safe(
-    safe: SafeCreate, x_user_id: str | None = Header(default=None)
+    safe: SafeCreate,
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
 ) -> SafeResponse:
-    check_current_user(x_user_id)
-    user_is_admin(x_user_id)
+    user = check_current_user_by_token(credentials=credentials)
+    user_is_admin(user)
     curr_id_number = get_next_safe_id_from_db()
     curr_sid = f"s_{curr_id_number}"
 
@@ -417,8 +447,8 @@ def get_members_of_safe(
 ) -> list[SafeMemberResponse]:
     if get_safe_from_db(safe_id) is None:
         raise HTTPException(status_code=404, detail="There is no such safe")
-    check_current_user(x_user_id)
-    user_is_admin(x_user_id)
+    user = check_current_user(x_user_id)
+    user_is_admin(user)
     members_list = []
     for (s_id, _), safe_member_response in safe_members.items():
         if s_id == safe_id:
@@ -427,15 +457,19 @@ def get_members_of_safe(
 
 
 @app.get("/safes")
-def get_safes(x_user_id: str | None = Header(default=None)) -> list[SafeResponse]:
-    user = check_current_user(x_user_id)
+def get_safes(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+) -> list[SafeResponse]:
+    user = check_current_user_by_token(credentials=credentials)
     if user.role == UserRole.admin:
         return get_all_safes_from_db()
     operator_list = []
     if user.role == UserRole.operator:
         for safe_id, member_user_id in safe_members:
-            if member_user_id == x_user_id:
-                operator_list.append(get_safe_from_db(safe_id))
+            if member_user_id == user.id:
+                safe = get_safe_from_db(safe_id)
+                if safe is not None:
+                    operator_list.append(get_safe_from_db(safe_id))
 
         return operator_list
 
@@ -492,5 +526,6 @@ def login(login_req: LoginRequest) -> LoginResponse:
     ):
         raise HTTPException(status_code=401, detail="Invalid username or password")
     token = f"token_{user.id}"
+    token_store[token] = user.id
     login_response = LoginResponse(access_token=token, token_type="bearer")
     return login_response
