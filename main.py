@@ -32,6 +32,10 @@ from database import (
     get_safe_from_db,
     get_all_safes_from_db,
     get_user_by_username_from_db,
+    get_safe_member_from_db,
+    get_members_of_safe_from_db,
+    get_safes_of_user_from_db,
+    create_safe_member_in_db,
 )
 
 
@@ -39,7 +43,7 @@ next_account_id = 1  # step 5
 next_audit_log_id = 1  # step 6
 
 
-safe_members: dict[tuple[str, str], SafeMemberResponse] = {}
+# safe_members: dict[tuple[str, str], SafeMemberResponse] = {} step 10-db with realtions
 
 
 accounts: dict[str, AccountResponse] = {}  # metadata - step 5 (of safe)
@@ -153,10 +157,10 @@ def can_retrieve_secret(
         return True
 
     if user.role == UserRole.operator:
-        safe_member = (safe_id, user.id)
-        if safe_member not in safe_members:
+        safe_member = get_safe_member_from_db(safe_id, user.id)
+        if safe_member is None:
             return False
-        permission = safe_members[safe_member].permission_level
+        permission = safe_member.permission_level
         if (
             permission == SafePermissionLevel.manage
             or permission == SafePermissionLevel.use
@@ -282,8 +286,8 @@ def add_account_to_safe(
 
     if (
         (x_user.role == UserRole.operator)
-        and (safe_id, x_user_id) in safe_members
-        and safe_members[(safe_id, x_user_id)].permission_level
+        and get_safe_member_from_db(safe_id, x_user_id) is not None
+        and get_safe_member_from_db(safe_id, x_user_id).permission_level
         == SafePermissionLevel.manage
     ):
         curr_id = f"a_{next_account_id}"
@@ -322,7 +326,7 @@ def get_accounts_of_safe(
         return list_of_accounts
 
     if x_user.role == UserRole.operator:
-        if (safe_id, x_user_id) not in safe_members:
+        if get_safe_member_from_db(safe_id, x_user.id) is None:
             raise HTTPException(status_code=403, detail="Unauthorized")
         else:
             for account_id in accounts:
@@ -354,8 +358,8 @@ def get_account_from_safe(
             raise HTTPException(status_code=404, detail="Not found")
     if x_user.role == UserRole.operator:
         if (
-            (safe_id, x_user_id) in safe_members
-        ):  # he is authorized to give info about this safe by the convention
+            get_safe_member_from_db(safe_id, x_user.id) is not None
+        ):  # he is authorized to get info about this safe by the convention
             if acc.safe_id == safe_id:
                 return acc
             else:
@@ -389,8 +393,8 @@ def add_member_to_safe(
             detail="cant add this member , user does not exist",
         )
 
-    safe_to_user = (safe_id, member.user_id)
-    if safe_to_user in safe_members:
+    safe_to_user = get_safe_member_from_db(safe_id, user.id)
+    if safe_to_user is not None:
         raise HTTPException(
             status_code=409,
             detail="Conflict - this user is already a member of this safe",
@@ -400,7 +404,7 @@ def add_member_to_safe(
         safe_id=safe_id,
         permission_level=member.permission_level,
     )
-    safe_members[safe_to_user] = safe_member_response
+    create_safe_member_in_db(safe_member_response)
     return safe_member_response
 
 
@@ -436,7 +440,7 @@ def get_safe_by_id(
         return safe
 
     if user.role == UserRole.operator:
-        if (safe_id, x_user_id) in safe_members:
+        if get_safe_member_from_db(safe_id, user.id) is not None:
             return safe
     raise HTTPException(status_code=403, detail="Unauthorized")
 
@@ -449,10 +453,7 @@ def get_members_of_safe(
         raise HTTPException(status_code=404, detail="There is no such safe")
     user = check_current_user(x_user_id)
     user_is_admin(user)
-    members_list = []
-    for (s_id, _), safe_member_response in safe_members.items():
-        if s_id == safe_id:
-            members_list.append(safe_member_response)
+    members_list = get_members_of_safe_from_db(safe_id)
     return members_list
 
 
@@ -465,12 +466,7 @@ def get_safes(
         return get_all_safes_from_db()
     operator_list = []
     if user.role == UserRole.operator:
-        for safe_id, member_user_id in safe_members:
-            if member_user_id == user.id:
-                safe = get_safe_from_db(safe_id)
-                if safe is not None:
-                    operator_list.append(get_safe_from_db(safe_id))
-
+        operator_list = get_safes_of_user_from_db(user.id)
         return operator_list
 
     if user.role == UserRole.auditor:

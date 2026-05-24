@@ -1,5 +1,14 @@
 import sqlite3
-from models import UserRole, UserResponse, UserState, SafeResponse, SafeType, UserRecord
+from models import (
+    UserRole,
+    UserResponse,
+    UserState,
+    SafeResponse,
+    SafeType,
+    UserRecord,
+    SafeMemberResponse,
+    SafePermissionLevel,
+)
 
 
 DB_FILE = "mini_vault.db"
@@ -27,8 +36,22 @@ def clear_safes_table() -> None:
     connection.close()
 
 
+def clear_safe_members_table() -> None:
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute("DELETE FROM safe_members")
+
+    connection.commit()
+    connection.close()
+
+
 def get_connection():
-    return sqlite3.connect(DB_FILE)
+    connection = sqlite3.connect(DB_FILE)
+    connection.execute(
+        "PRAGMA foreign_keys = ON"
+    )  # make sure foreign key is work  - תפעיל אכיפת מפתח זר בכל חיבור חדש למסד הנתונים
+    return connection
 
 
 def db_init():
@@ -57,6 +80,20 @@ def db_init():
         )
 
 
+        """
+    )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS safe_members(
+        safe_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        permission_level TEXT NOT NULL,
+        PRIMARY KEY (safe_id,user_id),
+        FOREIGN KEY (safe_id) REFERENCES safes(id),
+        FOREIGN KEY (user_id) REFERENCES users(id)
+
+
+                    )
         """
     )
     connection.commit()
@@ -103,6 +140,119 @@ def get_next_user_id_from_db() -> int:
     last_number = int(last_id.split("_")[1])
 
     return last_number + 1
+
+
+def create_safe_member_in_db(safe_member: SafeMemberResponse) -> None:
+    connection = get_connection()
+    cursor = connection.cursor()
+    cursor.execute(
+        """
+        INSERT INTO safe_members (safe_id , user_id,permission_level)
+        VALUES(?,?,?)
+        """,
+        (safe_member.safe_id, safe_member.user_id, safe_member.permission_level.value),
+    )
+    connection.commit()
+    connection.close()
+
+
+def get_safe_member_from_db(safe_id: str, user_id: str) -> SafeMemberResponse | None:
+    connection = get_connection()
+    cursor = connection.cursor()
+    cursor.execute(
+        """
+        SELECT safe_id,user_id,permission_level
+        FROM safe_members
+        WHERE safe_id = ? AND user_id = ?
+        """,
+        (safe_id, user_id),
+    )
+    row = cursor.fetchone()
+    connection.close()
+    if row is None:
+        return None
+    return SafeMemberResponse(
+        safe_id=row[0], user_id=row[1], permission_level=SafePermissionLevel(row[2])
+    )
+
+
+def get_all_safe_members_of_member_from_db(user_id: str) -> list[SafeMemberResponse]:
+    connection = get_connection()
+    cursor = connection.cursor()
+    cursor.execute(
+        """
+                SELECT safe_id,user_id,permission_level
+                FROM safe_members
+                WHERE user_id = ?
+                ORDER BY safe_id
+                   """,
+        (user_id,),
+    )
+    rows = cursor.fetchall()
+    connection.close()
+    safes_list = []
+    for row in rows:
+        safe_member_response = SafeMemberResponse(
+            safe_id=row[0], user_id=row[1], permission_level=SafePermissionLevel(row[2])
+        )
+        safes_list.append(safe_member_response)
+
+    return safes_list
+
+
+def get_members_of_safe_from_db(safe_id: str) -> list[SafeMemberResponse]:
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        SELECT safe_id, user_id, permission_level
+        FROM safe_members
+        WHERE safe_id = ?
+        ORDER BY user_id
+        """,
+        (safe_id,),
+    )
+
+    rows = cursor.fetchall()
+    connection.close()
+
+    members = []
+
+    for row in rows:
+        members.append(
+            SafeMemberResponse(
+                safe_id=row[0],
+                user_id=row[1],
+                permission_level=SafePermissionLevel(row[2]),
+            )
+        )
+
+    return members
+
+
+def get_safes_of_user_from_db(user_id: str) -> list[SafeResponse]:
+    connection = get_connection()
+    cursor = connection.cursor()
+    cursor.execute(
+        """
+        SELECT safes.id,safes.name,safes.safe_type,safes.description
+        FROM safes
+        JOIN safe_members ON  safes.id =safe_members.safe_id 
+        WHERE safe_members.user_id = ?
+        ORDER BY safes.id
+        """,
+        (user_id,),
+    )
+    rows = cursor.fetchall()
+    connection.close()
+    safes = []
+    for row in rows:
+        safe = SafeResponse(
+            id=row[0], name=row[1], safe_type=SafeType(row[2]), description=row[3]
+        )
+        safes.append(safe)
+    return safes
 
 
 def create_safe_in_db(safe: SafeResponse) -> None:

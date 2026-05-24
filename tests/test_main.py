@@ -1,7 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 import main
-from database import clear_users_table, clear_safes_table
+from database import clear_users_table, clear_safes_table, clear_safe_members_table
 
 
 client = TestClient(main.app)
@@ -14,10 +14,10 @@ def reset_state():
     main.next_account_id = 1
     main.next_audit_log_id = 1
 
+    clear_safe_members_table()
     clear_users_table()
     clear_safes_table()
 
-    main.safe_members.clear()
     main.accounts.clear()
     main.account_secrets.clear()
     main.audit_logs.clear()
