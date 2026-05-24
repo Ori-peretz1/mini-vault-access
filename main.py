@@ -36,18 +36,24 @@ from database import (
     get_members_of_safe_from_db,
     get_safes_of_user_from_db,
     create_safe_member_in_db,
+    get_account_from_db,
+    get_accounts_of_safe_from_db,
+    get_account_secret_from_db,
+    get_next_account_id_from_db,
+    create_account_in_db,
+    create_account_secret_in_db,
 )
 
 
-next_account_id = 1  # step 5
+# next_account_id = 1  # step 5
 next_audit_log_id = 1  # step 6
 
 
 # safe_members: dict[tuple[str, str], SafeMemberResponse] = {} step 10-db with realtions
 
 
-accounts: dict[str, AccountResponse] = {}  # metadata - step 5 (of safe)
-account_secrets: dict[str, str] = {}  # sensitive info - step 5
+# accounts: dict[str, AccountResponse] = {}  # metadata - step 5 (of safe)
+# account_secrets: dict[str, str] = {}  # sensitive info - step 5
 
 audit_logs: dict[str, AuditLogResponse] = {}
 Token = str
@@ -197,7 +203,8 @@ def retrieve_secret(
             account_id=account_id,
         )
         raise HTTPException(status_code=404, detail="Safe does not exist")
-    if account_id not in accounts:
+    account = get_account_from_db(account_id)
+    if account is None:
         audit_log_create(
             actor_id=actor_user.id,
             action=AuditAction.retrieve_secret,
@@ -207,7 +214,6 @@ def retrieve_secret(
             account_id=account_id,
         )
         raise HTTPException(status_code=404, detail="Account does not exist")
-    account = accounts[account_id]
     if account.safe_id != safe_id:
         audit_log_create(
             actor_id=actor_user.id,
@@ -220,7 +226,9 @@ def retrieve_secret(
         raise HTTPException(
             status_code=404, detail="This account is not connected to this safe"
         )
-
+    secret_val = get_account_secret_from_db(account_id)
+    if secret_val is None:
+        raise HTTPException(status_code=404, detail="Secret does not exist")
     if can_retrieve_secret(actor_user, safe_id):
         audit_log_create(
             actor_id=actor_user.id,
@@ -232,8 +240,8 @@ def retrieve_secret(
         )
         secret_retrieve_response = SecretRetrieveResponse(
             account_id=account_id,
-            secret_value=account_secrets[account_id],
-            secret_version=accounts[account_id].secret_version,
+            secret_value=secret_val,
+            secret_version=account.secret_version,
         )  # account can be in only one safe
         return secret_retrieve_response
     audit_log_create(
@@ -266,13 +274,12 @@ def add_account_to_safe(
     x_user_id: str | None = Header(default=None),
 ) -> AccountResponse:
     x_user = check_current_user(x_user_id)
-    global next_account_id
+
     if get_safe_from_db(safe_id) is None:
         raise HTTPException(status_code=404, detail="No such safe")
     if x_user.role == UserRole.admin:
-        curr_id = f"a_{next_account_id}"
-        next_account_id += 1
-        account_secrets[curr_id] = account_create.secret_value
+        curr_id_number = get_next_account_id_from_db()
+        curr_id = f"a_{curr_id_number}"
         account_response = AccountResponse(
             id=curr_id,
             safe_id=safe_id,
@@ -281,7 +288,10 @@ def add_account_to_safe(
             platform=account_create.platform,
             secret_version=1,
         )
-        accounts[curr_id] = account_response
+        create_account_in_db(account_response)
+        create_account_secret_in_db(
+            curr_id, account_create.secret_value, 1
+        )
         return account_response
 
     if (
@@ -290,9 +300,8 @@ def add_account_to_safe(
         and get_safe_member_from_db(safe_id, x_user_id).permission_level
         == SafePermissionLevel.manage
     ):
-        curr_id = f"a_{next_account_id}"
-        next_account_id += 1
-        account_secrets[curr_id] = account_create.secret_value
+        curr_id_number = get_next_account_id_from_db()
+        curr_id = f"a_{curr_id_number}"
         account_response = AccountResponse(
             id=curr_id,
             safe_id=safe_id,
@@ -301,7 +310,10 @@ def add_account_to_safe(
             platform=account_create.platform,
             secret_version=1,
         )
-        accounts[curr_id] = account_response
+        create_account_in_db(account_response)
+        create_account_secret_in_db(
+            curr_id, account_create.secret_value, 1
+        )
         return account_response
 
     raise HTTPException(status_code=403, detail="Unauthorized")
@@ -316,25 +328,15 @@ def get_accounts_of_safe(
     x_user = check_current_user(x_user_id)
     if get_safe_from_db(safe_id) is None:
         raise HTTPException(status_code=404, detail="There is no such safe")
-    list_of_accounts = []
+    list_of_accounts = get_accounts_of_safe_from_db(safe_id)
     if x_user.role == UserRole.admin:
-        for account_id in accounts:
-            acc = accounts[account_id]
-            if acc.safe_id == safe_id:
-                list_of_accounts.append(acc)
-
         return list_of_accounts
 
     if x_user.role == UserRole.operator:
         if get_safe_member_from_db(safe_id, x_user.id) is None:
             raise HTTPException(status_code=403, detail="Unauthorized")
         else:
-            for account_id in accounts:
-                acc = accounts[account_id]
-                if acc.safe_id == safe_id:
-                    list_of_accounts.append(acc)
-
-        return list_of_accounts
+            return list_of_accounts
 
     raise HTTPException(status_code=403, detail="Unauthorized")
 
@@ -348,20 +350,20 @@ def get_account_from_safe(
     x_user = check_current_user(x_user_id)
     if get_safe_from_db(safe_id) is None:
         raise HTTPException(status_code=404, detail="There is no such safe")
-    if account_id not in accounts:
+    account = get_account_from_db(account_id)
+    if account is None:
         raise HTTPException(status_code=404, detail="There is no such account")
-    acc = accounts[account_id]
     if x_user.role == UserRole.admin:
-        if acc.safe_id == safe_id:
-            return acc
+        if account.safe_id == safe_id:
+            return account
         else:
             raise HTTPException(status_code=404, detail="Not found")
     if x_user.role == UserRole.operator:
         if (
             get_safe_member_from_db(safe_id, x_user.id) is not None
         ):  # he is authorized to get info about this safe by the convention
-            if acc.safe_id == safe_id:
-                return acc
+            if account.safe_id == safe_id:
+                return account
             else:
                 raise HTTPException(status_code=404, detail="Not found")
 
@@ -393,7 +395,7 @@ def add_member_to_safe(
             detail="cant add this member , user does not exist",
         )
 
-    safe_to_user = get_safe_member_from_db(safe_id, user.id)
+    safe_to_user = get_safe_member_from_db(safe_id, member.user_id)
     if safe_to_user is not None:
         raise HTTPException(
             status_code=409,

@@ -8,6 +8,8 @@ from models import (
     UserRecord,
     SafeMemberResponse,
     SafePermissionLevel,
+    AccountResponse,
+    AccountPlatform,
 )
 
 
@@ -36,11 +38,31 @@ def clear_safes_table() -> None:
     connection.close()
 
 
+def clear_accounts_table() -> None:
+    connection = get_connection()
+    cursor = connection.cursor()
+    cursor.execute("""
+                   DELETE FROM accounts
+                   """)
+    connection.commit()
+    connection.close()
+
+
+def clear_account_secrets_table() -> None:
+    connection = get_connection()
+    cursor = connection.cursor()
+    cursor.execute("""
+                   DELETE FROM account_secrets
+                   """)
+    connection.commit()
+    connection.close()
+
+
 def clear_safe_members_table() -> None:
     connection = get_connection()
     cursor = connection.cursor()
 
-    cursor.execute("DELETE FROM safe_members")
+    cursor.execute("""DELETE FROM safe_members""")
 
     connection.commit()
     connection.close()
@@ -96,8 +118,158 @@ def db_init():
                     )
         """
     )
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS accounts(
+           id TEXT PRIMARY KEY NOT NULL,
+                   safe_id TEXT NOT NULL,
+                   username TEXT NOT NULL,
+                   target TEXT NOT NULL,
+                   platform TEXT NOT NULL,
+                   secret_version INTEGER NOT NULL,
+                   FOREIGN KEY (safe_id) REFERENCES safes(id)
+                   
+                   
+                   )
+                   """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS account_secrets(
+                   account_id TEXT PRIMARY KEY,
+                   secret_value TEXT NOT NULL,
+                   secret_version INTEGER NOT NULL,
+                   FOREIGN KEY (account_id) REFERENCES accounts(id)
+                   )
+                   """)
     connection.commit()
     connection.close()
+
+
+def create_account_in_db(user: AccountResponse) -> None:
+    connection = get_connection()
+    cursor = connection.cursor()
+    cursor.execute(
+        """
+        INSERT INTO accounts (id,safe_id,username,target,platform,secret_version)
+        VALUES(?, ? , ?, ? , ?, ?)
+        """,
+        (
+            user.id,
+            user.safe_id,
+            user.username,
+            user.target,
+            user.platform.value,
+            user.secret_version,
+        ),
+    )
+    connection.commit()
+    connection.close()
+
+
+def create_account_secret_in_db(
+    account_id: str, secret_value: str, secret_version: int
+) -> None:
+    connection = get_connection()
+    cursor = connection.cursor()
+    cursor.execute(
+        """
+    INSERT INTO account_secrets(account_id,secret_value,secret_version)
+                   VALUES(?,?,?)
+    """,
+        (account_id, secret_value, secret_version),
+    )
+    connection.commit()
+    connection.close()
+
+
+def get_account_from_db(account_id: str) -> AccountResponse | None:
+    connection = get_connection()
+    cursor = connection.cursor()
+    cursor.execute(
+        """
+    SELECT id,safe_id,username,target,platform,secret_version
+                   FROM accounts
+                   WHERE id = ?
+""",
+        (account_id,),
+    )
+    row = cursor.fetchone()
+    connection.close()
+    if row is None:
+        return None
+    return AccountResponse(
+        id=row[0],
+        safe_id=row[1],
+        username=row[2],
+        target=row[3],
+        platform=AccountPlatform(row[4]),
+        secret_version=row[5],
+    )
+
+
+def get_accounts_of_safe_from_db(safe_id: str) -> list[AccountResponse]:
+    connection = get_connection()
+    cursor = connection.cursor()
+    cursor.execute(
+        """
+    SELECT id,safe_id,username,target,platform,secret_version
+                   FROM accounts
+                   WHERE safe_id = ?
+""",
+        (safe_id,),
+    )
+    rows = cursor.fetchall()
+    connection.close()
+    safe_accounts = []
+    for row in rows:
+        account = AccountResponse(
+            id=row[0],
+            safe_id=row[1],
+            username=row[2],
+            target=row[3],
+            platform=AccountPlatform(row[4]),
+            secret_version=row[5],
+        )
+        safe_accounts.append(account)
+
+    return safe_accounts
+
+
+def get_account_secret_from_db(account_id: str) -> str | None:
+    connection = get_connection()
+    cursor = connection.cursor()
+    cursor.execute(
+        """
+    SELECT secret_value
+    FROM account_secrets
+    WHERE account_id = ?
+""",
+        (account_id,),
+    )
+    row = cursor.fetchone()
+    connection.close()
+    if row is None:
+        return None
+    return row[0]
+
+
+def get_next_account_id_from_db() -> int:
+    connection = get_connection()
+    cursor = connection.cursor()
+    cursor.execute(
+        """
+        SELECT id 
+        FROM accounts
+        ORDER BY CAST(SUBSTR(id,3)AS INTEGER ) DESC
+        LIMIT 1
+"""
+    )
+    row = cursor.fetchone()
+    connection.close()
+
+    if row is None:
+        return 1
+    last_id = row[0]
+    last_id_number = int(last_id.split("_")[1])
+    return last_id_number + 1
 
 
 def get_next_safe_id_from_db() -> int:
