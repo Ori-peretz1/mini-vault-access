@@ -1,7 +1,9 @@
-from fastapi import FastAPI, HTTPException, Header, Depends
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.middleware.cors import CORSMiddleware
 import hashlib
 import os
+import secrets
 from datetime import datetime, timezone
 from models import (
     AccountCreate,
@@ -66,18 +68,25 @@ token_store: dict[Token, UserId] = {}  # step 9 tokens - from token to user id
 bearer_scheme = HTTPBearer(auto_error=False)
 
 app = FastAPI(title="Mini vault access project")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 db_init()
 
 
-def check_current_user(x_user_id: str | None) -> UserResponse:
-    if x_user_id is None:
-        raise HTTPException(status_code=401, detail="Missing X-User-Id header")
-    user_response = get_user_from_db(x_user_id)
-    if user_response is None:
-        raise HTTPException(status_code=401, detail="user id does not exist")
-    if user_response.state != UserState.active:
-        raise HTTPException(status_code=403, detail="user is not active")
-    return user_response
+# def check_current_user(x_user_id: str | None) -> UserResponse:
+#     if x_user_id is None:
+#         raise HTTPException(status_code=401, detail="Missing X-User-Id header")
+#     user_response = get_user_from_db(x_user_id)
+#     if user_response is None:
+#         raise HTTPException(status_code=401, detail="user id does not exist")
+#     if user_response.state != UserState.active:
+#         raise HTTPException(status_code=403, detail="user is not active")
+#     return user_response
 
 
 def check_current_user_by_token(
@@ -133,7 +142,7 @@ def verify_password(
 
 def user_is_admin(user: UserResponse) -> None:
     if user.role != UserRole.admin:
-        raise HTTPException(status_code=403, detail="Only admin can create safe")
+        raise HTTPException(status_code=403, detail="Admin permission required")
 
 
 def audit_log_create(
@@ -192,11 +201,12 @@ def get_user_by_token(
     summary="retrieving a secret from a safe",
 )  # step 6
 def retrieve_secret(
-    safe_id: str, account_id: str, x_user_id: str | None = Header(default=None)
+    safe_id: str,
+    account_id: str,
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
 ) -> SecretRetrieveResponse:
-    actor_user = check_current_user(
-        x_user_id
-    )  # this case does not create audit log for now
+    actor_user = check_current_user_by_token(credentials)
+    # this case does not create audit log for now
     if get_safe_from_db(safe_id) is None:
         audit_log_create(
             actor_id=actor_user.id,
@@ -238,7 +248,7 @@ def retrieve_secret(
             actor_id=actor_user.id,
             action=AuditAction.retrieve_secret,
             success=True,
-            msg=f"{x_user_id} retrieved secret for account {account_id} from safe {safe_id}",
+            msg=f"{actor_user.id} retrieved secret for account {account_id} from safe {safe_id}",
             safe_id=safe_id,
             account_id=account_id,
         )
@@ -252,7 +262,7 @@ def retrieve_secret(
         actor_id=actor_user.id,
         action=AuditAction.retrieve_secret,
         success=False,
-        msg=f"Unauthorized {x_user_id} tried to retrieved secret for account {account_id}",
+        msg=f"Unauthorized {actor_user.id} tried to retrieved secret for account {account_id}",
         safe_id=safe_id,
         account_id=account_id,
     )
@@ -261,9 +271,9 @@ def retrieve_secret(
 
 @app.get("/audit-logs")  # step 6
 def get_audit_logs(
-    x_user_id: str | None = Header(default=None),
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
 ) -> list[AuditLogResponse]:
-    user = check_current_user(x_user_id)
+    user = check_current_user_by_token(credentials)
     if user.role != UserRole.admin:
         raise HTTPException(status_code=403, detail="Only admin can get logs")
     return get_all_audit_logs_from_db()
@@ -275,9 +285,9 @@ def get_audit_logs(
 def add_account_to_safe(
     safe_id: str,
     account_create: AccountCreate,
-    x_user_id: str | None = Header(default=None),
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
 ) -> AccountResponse:
-    x_user = check_current_user(x_user_id)
+    x_user = check_current_user_by_token(credentials)
 
     if get_safe_from_db(safe_id) is None:
         raise HTTPException(status_code=404, detail="No such safe")
@@ -298,8 +308,8 @@ def add_account_to_safe(
 
     if (
         (x_user.role == UserRole.operator)
-        and get_safe_member_from_db(safe_id, x_user_id) is not None
-        and get_safe_member_from_db(safe_id, x_user_id).permission_level
+        and get_safe_member_from_db(safe_id, x_user.id) is not None
+        and get_safe_member_from_db(safe_id, x_user.id).permission_level
         == SafePermissionLevel.manage
     ):
         curr_id_number = get_next_account_id_from_db()
@@ -323,9 +333,10 @@ def add_account_to_safe(
     "/safes/{safe_id}/accounts", summary="get accounts of specific safe"
 )  # get accounts of a specific safe - step 5
 def get_accounts_of_safe(
-    safe_id: str, x_user_id: str | None = Header(default=None)
+    safe_id: str,
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
 ) -> list[AccountResponse]:
-    x_user = check_current_user(x_user_id)
+    x_user = check_current_user_by_token(credentials)
     if get_safe_from_db(safe_id) is None:
         raise HTTPException(status_code=404, detail="There is no such safe")
     list_of_accounts = get_accounts_of_safe_from_db(safe_id)
@@ -345,9 +356,11 @@ def get_accounts_of_safe(
     "/safes/{safe_id}/accounts/{account_id}"
 )  # getting meta data of account by account id - step 5
 def get_account_from_safe(
-    safe_id: str, account_id: str, x_user_id: str | None = Header(default=None)
+    safe_id: str,
+    account_id: str,
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
 ) -> AccountResponse:
-    x_user = check_current_user(x_user_id)
+    x_user = check_current_user_by_token(credentials)
     if get_safe_from_db(safe_id) is None:
         raise HTTPException(status_code=404, detail="There is no such safe")
     account = get_account_from_db(account_id)
@@ -379,9 +392,9 @@ def health() -> dict[str, str]:
 def add_member_to_safe(
     safe_id: str,
     member: SafeMemberCreate,
-    x_user_id: (str | None) = Header(default=None),
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
 ) -> SafeMemberResponse:
-    user = check_current_user(x_user_id)
+    user = check_current_user_by_token(credentials)
     user_is_admin(user)
     if get_safe_from_db(safe_id) is None:
         raise HTTPException(
@@ -432,12 +445,13 @@ def create_safe(
 
 @app.get("/safes/{safe_id}")
 def get_safe_by_id(
-    safe_id: str, x_user_id: str | None = Header(default=None)
+    safe_id: str,
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
 ) -> SafeResponse:
     safe = get_safe_from_db(safe_id)
     if safe is None:
         raise HTTPException(status_code=404, detail="no such safe")
-    user = check_current_user(x_user_id)
+    user = check_current_user_by_token(credentials)
     if user.role == UserRole.admin:
         return safe
 
@@ -449,11 +463,12 @@ def get_safe_by_id(
 
 @app.get("/safes/{safe_id}/members")
 def get_members_of_safe(
-    safe_id: str, x_user_id: str | None = Header(default=None)
+    safe_id: str,
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
 ) -> list[SafeMemberResponse]:
     if get_safe_from_db(safe_id) is None:
         raise HTTPException(status_code=404, detail="There is no such safe")
-    user = check_current_user(x_user_id)
+    user = check_current_user_by_token(credentials)
     user_is_admin(user)
     members_list = get_members_of_safe_from_db(safe_id)
     return members_list
@@ -523,7 +538,7 @@ def login(login_req: LoginRequest) -> LoginResponse:
         stored_hash_hex=user.password_hash,
     ):
         raise HTTPException(status_code=401, detail="Invalid username or password")
-    token = f"token_{user.id}"
+    token = secrets.token_urlsafe(32)
     token_store[token] = user.id
     login_response = LoginResponse(access_token=token, token_type="bearer")
     return login_response

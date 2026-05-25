@@ -188,7 +188,7 @@ def get_all_audit_logs_from_db() -> list[AuditLogResponse]:
             account_id=row[4],
             success=row[5],
             message=row[6],
-            time=row[7]
+            time=row[7],
         )
         audit_logs_list.append(audit_log_response)
 
@@ -241,7 +241,7 @@ def get_audit_log_from_db(audit_id: str) -> AuditLogResponse | None:
         account_id=row[4],
         success=bool(row[5]),
         message=row[6],
-        time=row[7]
+        time=row[7],
     )
 
 
@@ -251,7 +251,7 @@ def get_next_audit_log_id() -> int:
     cursor.execute("""
                    SELECT id
                    FROM audit_logs
-                   ORDER BY CAST(SUBSTR(id,3)AS INTEGER ) DESC
+                   ORDER BY CAST(SUBSTR(id,5)AS INTEGER ) DESC
                    LIMIT 1
                    """)
     row = cursor.fetchone()

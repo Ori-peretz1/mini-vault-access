@@ -97,9 +97,11 @@ def login(username: str = "Ori", password: str = "123456"):
 def add_member_as_admin(
     safe_id: str = "s_1", user_id: str = "u_2", permission_level: str = "use"
 ):
+    login_request = login()
+    login_token = login_request.json()["access_token"]
     return client.post(
         f"/safes/{safe_id}/members",
-        headers={"x-user-id": "u_1"},
+        headers={"Authorization": f"Bearer {login_token}"},
         json={"user_id": user_id, "permission_level": permission_level},
     )
 
@@ -111,9 +113,11 @@ def create_account_as_admin(
     secret_value: str = "fake-root-secret",
     username: str = "root",
 ):
+    login_request = login()
+    login_token = login_request.json()["access_token"]
     return client.post(
         f"/safes/{safe_id}/accounts",
-        headers={"x-user-id": "u_1"},
+        headers={"Authorization": f"Bearer {login_token}"},
         json={
             "username": username,
             "target": target,
@@ -182,7 +186,7 @@ def test_operator_cant_create_safe():
         },
     )
     assert response.status_code == 403
-    assert response.json()["detail"] == "Only admin can create safe"
+    assert response.json()["detail"] == "Admin permission required"
 
 
 def test_operator_with_read_cant_retrieve_secret():
@@ -191,16 +195,18 @@ def test_operator_with_read_cant_retrieve_secret():
     create_safe_as_admin()
     create_account_as_admin(safe_id="s_1")
     add_member_as_admin(permission_level="read")
+    login_response = login(username="Bob", password="123456")
+    token = login_response.json()["access_token"]
     response = client.post(
         "/safes/s_1/accounts/a_1/retrieve",
-        headers={"x-user-id": "u_2"},
+        headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 403
     assert response.json()["detail"] == "Unauthorized"
 
     logs_response = client.get(
         "/audit-logs",
-        headers={"x-user-id": "u_1"},
+        headers=auth_header_for_admin(),
     )
 
     assert logs_response.status_code == 200
@@ -223,9 +229,11 @@ def test_admin_can_retrieve_secret():
     create_operator()
     create_safe_as_admin()
     create_account_as_admin(safe_id="s_1")
+    login_response = login()
+    token = login_response.json()["access_token"]
     response = client.post(
         "/safes/s_1/accounts/a_1/retrieve",
-        headers={"x-user-id": "u_1"},
+        headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 200
     assert response.json() == {
@@ -233,9 +241,10 @@ def test_admin_can_retrieve_secret():
         "secret_value": "fake-root-secret",
         "secret_version": 1,
     }
+
     logs_response = client.get(
         "/audit-logs",
-        headers={"x-user-id": "u_1"},
+        headers={"Authorization": f"Bearer {token}"},
     )
     assert logs_response.status_code == 200
 
@@ -256,10 +265,11 @@ def test_operator_with_use_permission_can_retrieve_secret():
     create_safe_as_admin()
     create_account_as_admin(safe_id="s_1")
     add_member_as_admin(permission_level="use")
-
+    login_response = login(username="Bob", password="123456")
+    token = login_response.json()["access_token"]
     response = client.post(
         "/safes/s_1/accounts/a_1/retrieve",
-        headers={"x-user-id": "u_2"},
+        headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 200
     assert response.json() == {
@@ -270,7 +280,7 @@ def test_operator_with_use_permission_can_retrieve_secret():
 
     logs_response = client.get(
         "/audit-logs",
-        headers={"x-user-id": "u_1"},
+        headers=auth_header_for_admin(),
     )
 
     assert logs_response.json()[0]["success"] is True
@@ -285,7 +295,12 @@ def test_login_return_token():
     create_admin()
     response = login()
     assert response.status_code == 200
-    assert response.json() == {"access_token": "token_u_1", "token_type": "bearer"}
+    data = response.json()
+    assert data["token_type"] == "bearer"
+    assert isinstance(data["access_token"], str)
+    assert len(data["access_token"]) > 20
+    assert data["access_token"] in main.token_store
+    assert main.token_store[data["access_token"]] == "u_1"
 
 
 def test_me_with_valid_token():
