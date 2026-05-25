@@ -7,6 +7,7 @@ from database import (
     clear_safe_members_table,
     clear_account_secrets_table,
     clear_accounts_table,
+    clear_audit_logs,
 )
 
 
@@ -17,15 +18,13 @@ client = TestClient(main.app)
     autouse=True
 )  # autouse means that between every test , this reset ode will run again
 def reset_state():
-    main.next_account_id = 1
-    main.next_audit_log_id = 1
+    clear_audit_logs()
     clear_account_secrets_table()
     clear_accounts_table()
     clear_safe_members_table()
     clear_users_table()
     clear_safes_table()
 
-    main.audit_logs.clear()
     main.token_store.clear()
 
     yield  # means till here the reset test code

@@ -121,6 +121,7 @@ class AuditLogResponse(BaseModel):
     account_id: str | None = None
     success: bool
     message: str
+    time:str
 
 
 class SecretRetrieveResponse(BaseModel):

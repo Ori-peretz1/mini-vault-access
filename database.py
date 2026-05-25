@@ -10,6 +10,8 @@ from models import (
     SafePermissionLevel,
     AccountResponse,
     AccountPlatform,
+    AuditLogResponse,
+    AuditAction,
 )
 
 
@@ -22,6 +24,16 @@ def clear_users_table() -> None:  # helper function for tests
 
     cursor.execute("DELETE FROM users")
 
+    connection.commit()
+    connection.close()
+
+
+def clear_audit_logs() -> None:
+    connection = get_connection()
+    cursor = connection.cursor()
+    cursor.execute("""
+        DELETE FROM audit_logs
+                   """)
     connection.commit()
     connection.close()
 
@@ -139,8 +151,117 @@ def db_init():
                    FOREIGN KEY (account_id) REFERENCES accounts(id)
                    )
                    """)
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS audit_logs(
+        id TEXT PRIMARY KEY NOT NULL,
+        actor_user_id TEXT NOT NULL,
+        action TEXT NOT NULL,
+        safe_id TEXT,
+        account_id TEXT,
+        success INTEGER NOT NULL CHECK (success IN (0, 1)),
+        message TEXT,
+        time TEXT NOT NULL )
+"""
+    )
     connection.commit()
     connection.close()
+
+
+def get_all_audit_logs_from_db() -> list[AuditLogResponse]:
+    connection = get_connection()
+    cursor = connection.cursor()
+    cursor.execute("""
+                SELECT id,actor_user_id,action,safe_id,account_id,success,message,time
+                FROM audit_logs
+                ORDER BY time 
+                   """)
+    rows = cursor.fetchall()
+    connection.close()
+    audit_logs_list = []
+    for row in rows:
+        audit_log_response = AuditLogResponse(
+            id=row[0],
+            actor_user_id=row[1],
+            action=AuditAction(row[2]),
+            safe_id=row[3],
+            account_id=row[4],
+            success=row[5],
+            message=row[6],
+            time=row[7]
+        )
+        audit_logs_list.append(audit_log_response)
+
+    return audit_logs_list
+
+
+def create_audit_log_in_db(audit_log: AuditLogResponse) -> None:
+    connection = get_connection()
+    cursor = connection.cursor()
+    cursor.execute(
+        """
+        INSERT INTO audit_logs(id,actor_user_id,action,safe_id,account_id,success,message,time)
+                   VALUES(?,?,?,?,?,?,?,?)
+                   """,
+        (
+            audit_log.id,
+            audit_log.actor_user_id,
+            audit_log.action.value,
+            audit_log.safe_id,
+            audit_log.account_id,
+            audit_log.success,
+            audit_log.message,
+            audit_log.time,
+        ),
+    )
+    connection.commit()
+    connection.close()
+
+
+def get_audit_log_from_db(audit_id: str) -> AuditLogResponse | None:
+    connection = get_connection()
+    cursor = connection.cursor()
+    cursor.execute(
+        """
+        SELECT id,actor_user_id,action,safe_id,account_id,success,message,time
+                   FROM audit_logs
+                   WHERE id = ?
+        """,
+        (audit_id,),
+    )
+    row = cursor.fetchone()
+    connection.close()
+    if row is None:
+        return None
+    return AuditLogResponse(
+        id=row[0],
+        actor_user_id=row[1],
+        action=AuditAction(row[2]),
+        safe_id=row[3],
+        account_id=row[4],
+        success=bool(row[5]),
+        message=row[6],
+        time=row[7]
+    )
+
+
+def get_next_audit_log_id() -> int:
+    connection = get_connection()
+    cursor = connection.cursor()
+    cursor.execute("""
+                   SELECT id
+                   FROM audit_logs
+                   ORDER BY CAST(SUBSTR(id,3)AS INTEGER ) DESC
+                   LIMIT 1
+                   """)
+    row = cursor.fetchone()
+    connection.close()
+    if row is None:
+        return 1
+
+    last_id = row[0]
+    last_number_id = int(last_id.split("_")[1])
+    return last_number_id + 1
 
 
 def create_account_in_db(user: AccountResponse) -> None:

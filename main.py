@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException, Header, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import hashlib
 import os
+from datetime import datetime, timezone
 from models import (
     AccountCreate,
     AccountResponse,
@@ -42,11 +43,14 @@ from database import (
     get_next_account_id_from_db,
     create_account_in_db,
     create_account_secret_in_db,
+    create_audit_log_in_db,
+    get_next_audit_log_id,
+    get_all_audit_logs_from_db,
 )
 
 
 # next_account_id = 1  # step 5
-next_audit_log_id = 1  # step 6
+# next_audit_log_id = 1  # step 6
 
 
 # safe_members: dict[tuple[str, str], SafeMemberResponse] = {} step 10-db with realtions
@@ -55,7 +59,7 @@ next_audit_log_id = 1  # step 6
 # accounts: dict[str, AccountResponse] = {}  # metadata - step 5 (of safe)
 # account_secrets: dict[str, str] = {}  # sensitive info - step 5
 
-audit_logs: dict[str, AuditLogResponse] = {}
+# audit_logs: dict[str, AuditLogResponse] = {}
 Token = str
 UserId = str
 token_store: dict[Token, UserId] = {}  # step 9 tokens - from token to user id
@@ -140,9 +144,8 @@ def audit_log_create(
     safe_id: str | None = None,
     account_id: str | None = None,
 ) -> AuditLogResponse:  # helper for creating audit -step 6
-    global next_audit_log_id
-    curr_log_id = f"log_{next_audit_log_id}"
-    next_audit_log_id += 1
+    id = get_next_audit_log_id()
+    curr_log_id = f"log_{id}"
     audit_response = AuditLogResponse(
         id=curr_log_id,
         actor_user_id=actor_id,
@@ -151,8 +154,9 @@ def audit_log_create(
         account_id=account_id,
         success=success,
         message=msg,
+        time=datetime.now(timezone.utc).isoformat(),
     )
-    audit_logs[curr_log_id] = audit_response
+    create_audit_log_in_db(audit_response)
     return audit_response
 
 
@@ -262,7 +266,7 @@ def get_audit_logs(
     user = check_current_user(x_user_id)
     if user.role != UserRole.admin:
         raise HTTPException(status_code=403, detail="Only admin can get logs")
-    return list(audit_logs.values())
+    return get_all_audit_logs_from_db()
 
 
 @app.post(
@@ -289,9 +293,7 @@ def add_account_to_safe(
             secret_version=1,
         )
         create_account_in_db(account_response)
-        create_account_secret_in_db(
-            curr_id, account_create.secret_value, 1
-        )
+        create_account_secret_in_db(curr_id, account_create.secret_value, 1)
         return account_response
 
     if (
@@ -311,9 +313,7 @@ def add_account_to_safe(
             secret_version=1,
         )
         create_account_in_db(account_response)
-        create_account_secret_in_db(
-            curr_id, account_create.secret_value, 1
-        )
+        create_account_secret_in_db(curr_id, account_create.secret_value, 1)
         return account_response
 
     raise HTTPException(status_code=403, detail="Unauthorized")
