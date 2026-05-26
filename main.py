@@ -48,6 +48,8 @@ from database import (
     create_audit_log_in_db,
     get_next_audit_log_id,
     get_all_audit_logs_from_db,
+    create_session_in_db,
+    get_session_from_db,
 )
 
 
@@ -62,9 +64,9 @@ from database import (
 # account_secrets: dict[str, str] = {}  # sensitive info - step 5
 
 # audit_logs: dict[str, AuditLogResponse] = {}
-Token = str
-UserId = str
-token_store: dict[Token, UserId] = {}  # step 9 tokens - from token to user id
+# Token = str
+# UserId = str
+# token_store: dict[Token, UserId] = {}  # step 9 tokens - from token to user id
 bearer_scheme = HTTPBearer(auto_error=False)
 
 app = FastAPI(title="Mini vault access project")
@@ -97,9 +99,12 @@ def check_current_user_by_token(
     if credentials.scheme.lower() != "bearer":
         raise HTTPException(status_code=401, detail="Token type not compatible")
     token = credentials.credentials
-    if token not in token_store:
+    session = get_session_from_db(token=token)
+    if session is None:
         raise HTTPException(status_code=401, detail="Wrong or expired token")
-    user_id = token_store[token]
+    if session.is_revoked:
+        raise HTTPException(status_code=401, detail="Wrong or expired token")
+    user_id = session.user_id
     user = get_user_from_db(user_id)
     if user is None:
         raise HTTPException(status_code=401, detail="User does'nt exist")
@@ -539,6 +544,8 @@ def login(login_req: LoginRequest) -> LoginResponse:
     ):
         raise HTTPException(status_code=401, detail="Invalid username or password")
     token = secrets.token_urlsafe(32)
-    token_store[token] = user.id
+    create_session_in_db(
+        user_id=user.id, token=token, created_at=datetime.now(timezone.utc).isoformat()
+    )
     login_response = LoginResponse(access_token=token, token_type="bearer")
     return login_response

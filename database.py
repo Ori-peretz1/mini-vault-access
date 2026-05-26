@@ -12,6 +12,7 @@ from models import (
     AccountPlatform,
     AuditLogResponse,
     AuditAction,
+    SessionResponse,
 )
 
 
@@ -76,6 +77,16 @@ def clear_safe_members_table() -> None:
 
     cursor.execute("""DELETE FROM safe_members""")
 
+    connection.commit()
+    connection.close()
+
+
+def clear_sessions_table() -> None:
+    connection = get_connection()
+    cursor = connection.cursor()
+    cursor.execute("""
+                   DELETE FROM sessions
+                   """)
     connection.commit()
     connection.close()
 
@@ -164,8 +175,58 @@ def db_init():
         time TEXT NOT NULL )
 """
     )
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS sessions(
+        token TEXT PRIMARY KEY NOT NULL,
+        user_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at TEXT,
+        is_revoked INTEGER NOT NULL CHECK (is_revoked IN (0, 1)),
+        FOREIGN KEY (user_id) REFERENCES users(id)
+        
+                   )
+                   """)
     connection.commit()
     connection.close()
+
+
+def create_session_in_db(user_id: str, token: str, created_at: str) -> None:
+    connection = get_connection()
+    cursor = connection.cursor()
+    cursor.execute(
+        """
+            INSERT INTO sessions (token,user_id,created_at,is_revoked)
+            VALUES(?,?,?,?)
+            
+                   """,
+        (token, user_id, created_at, False),
+    )
+    connection.commit()
+    connection.close()
+
+
+def get_session_from_db(token: str) -> SessionResponse | None:
+    connection = get_connection()
+    cursor = connection.cursor()
+    cursor.execute(
+        """
+            SELECT token,user_id,created_at,expires_at,is_revoked
+            FROM sessions
+            WHERE token = ? 
+                   """,
+        (token,),
+    )
+    row = cursor.fetchone()
+    connection.close()
+    if row is None:
+        return None
+    return SessionResponse(
+        token=row[0],
+        user_id=row[1],
+        created_at=row[2],
+        expired_at=row[3],
+        is_revoked=row[4],
+    )
 
 
 def get_all_audit_logs_from_db() -> list[AuditLogResponse]:

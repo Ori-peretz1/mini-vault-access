@@ -8,6 +8,8 @@ from database import (
     clear_account_secrets_table,
     clear_accounts_table,
     clear_audit_logs,
+    clear_sessions_table,
+    get_session_from_db,
 )
 
 
@@ -21,11 +23,10 @@ def reset_state():
     clear_audit_logs()
     clear_account_secrets_table()
     clear_accounts_table()
+    clear_sessions_table()
     clear_safe_members_table()
     clear_users_table()
     clear_safes_table()
-
-    main.token_store.clear()
 
     yield  # means till here the reset test code
 
@@ -299,8 +300,12 @@ def test_login_return_token():
     assert data["token_type"] == "bearer"
     assert isinstance(data["access_token"], str)
     assert len(data["access_token"]) > 20
-    assert data["access_token"] in main.token_store
-    assert main.token_store[data["access_token"]] == "u_1"
+
+    session = get_session_from_db(data["access_token"])
+
+    assert session is not None
+    assert session.user_id == "u_1"
+    assert session.is_revoked is False
 
 
 def test_me_with_valid_token():
@@ -351,3 +356,124 @@ def test_me_invalid_token_get_401():
     )
     assert response.status_code == 401
     assert response.json()["detail"] == "Wrong or expired token"
+
+
+def test_operator_member_can_get_safe_by_id():
+    create_admin()
+    create_operator()
+    create_safe_as_admin()
+    add_member_as_admin(permission_level="read")
+    response = client.get(
+        "/safes/s_1",
+        headers=auth_header(username="Bob", password="123456"),
+    )
+    assert response.status_code == 200
+    assert response.json() == {
+        "id": "s_1",
+        "name": "Production Linux Servers",
+        "safe_type": "linux_accounts",
+        "description": "Privileged Linux accounts",
+    }
+
+
+def test_non_member_operator_cant_get_safe_by_id():
+    create_admin()
+    create_operator()
+    create_safe_as_admin()
+    response = client.get(
+        "/safes/s_1",
+        headers=auth_header(username="Bob", password="123456"),
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Unauthorized"
+
+
+def test_auditor_can_retrieve_secret():
+    create_admin()
+    create_auditor()
+    create_safe_as_admin()
+    create_account_as_admin(safe_id="s_1")
+    response = client.post(
+        "/safes/s_1/accounts/a_1/retrieve",
+        headers=auth_header(username="Dana", password="123456"),
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Unauthorized"
+
+    logs_response = client.get(
+        "/audit-logs",
+        headers=auth_header_for_admin(),
+    )
+
+    assert logs_response.status_code == 200
+    logs = logs_response.json()
+
+    assert len(logs) == 1
+    assert logs[0]["actor_user_id"] == "u_2"
+    assert logs[0]["action"] == "retrieve_secret"
+    assert logs[0]["safe_id"] == "s_1"
+    assert logs[0]["account_id"] == "a_1"
+    assert logs[0]["success"] is False
+    assert (
+        logs[0]["message"]
+        == "Unauthorized u_2 tried to retrieved secret for account a_1"
+    )
+
+
+def test_operator_cannot_read_audit_logs():
+    create_operator()
+
+    response = client.get(
+        "/audit-logs",
+        headers=auth_header(username="Bob"),
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Only admin can get logs"
+
+
+def test_safes_with_invalid_token_returns_401():
+    response = client.get(
+        "/safes",
+        headers={"Authorization": "Bearer invalid-token"},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Wrong or expired token"
+
+
+def test_admin_can_get_members_of_safe():
+    create_admin()
+    create_operator()
+    create_safe_as_admin()
+    add_member_as_admin(safe_id="s_1", user_id="u_2", permission_level="use")
+
+    response = client.get(
+        "/safes/s_1/members",
+        headers=auth_header_for_admin(),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {
+            "user_id": "u_2",
+            "safe_id": "s_1",
+            "permission_level": "use",
+        }
+    ]
+
+
+def test_operator_cannot_get_members_of_safe():
+    create_admin()
+    create_operator()
+    create_safe_as_admin()
+    add_member_as_admin(safe_id="s_1", user_id="u_2", permission_level="use")
+
+    response = client.get(
+        "/safes/s_1/members",
+        headers=auth_header(username="Bob"),
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Admin permission required"

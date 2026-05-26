@@ -128,3 +128,11 @@ class SecretRetrieveResponse(BaseModel):
     account_id: str
     secret_value: str
     secret_version: int
+
+
+class SessionResponse(BaseModel):
+    token: str
+    user_id: str
+    created_at: str
+    expires_at: str | None = None
+    is_revoked: bool

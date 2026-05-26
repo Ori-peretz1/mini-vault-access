@@ -8,11 +8,12 @@ The project demonstrates backend API development, authentication, authorization,
 
 - FastAPI backend
 - Pydantic request and response models
-- SQLite persistence for users, safes, safe members, accounts, account secrets, and audit logs
+- SQLite persistence for users, safes, safe members, accounts, account secrets, audit logs, and sessions
 - User registration
 - Login with password hashing using scrypt and salt
 - Bearer token authentication
 - Secure random access token generation
+- SQLite-backed bearer sessions
 - Role-based authorization
 - Safes and safe members
 - Foreign keys and JOIN queries
@@ -132,8 +133,11 @@ The frontend is included as a visual fullstack demo for testing the backend flow
 3. User logs in with username and password.
 4. Backend validates the password hash.
 5. Backend creates a secure random bearer token.
-6. Frontend sends the token in the Authorization header.
-7. Backend identifies the current user from the bearer token.
+6. Backend stores the token as a session in SQLite.
+7. Frontend sends the token in the Authorization header.
+8. Backend looks up the session by token.
+9. Backend identifies the current user from the session user_id.
+10. Backend verifies the user exists and is active.
 ```
 
 Example protected request:
@@ -164,6 +168,7 @@ Persisted entities:
 - Accounts
 - Account secrets
 - Audit logs
+- Sessions
 
 The project includes examples of:
 
@@ -180,19 +185,21 @@ This is an educational project and is not production-ready.
 Completed learning milestones:
 
 - Replaced `x-user-id` mock authentication with bearer token authentication
-- Persisted users, safes, safe members, accounts, account secrets, and audit logs in SQLite
+- Persisted users, safes, safe members, accounts, account secrets, audit logs, and sessions in SQLite
 - Added foreign keys and JOIN queries
 - Added password hashing with scrypt and salt
 - Added secure random bearer tokens
+- Persisted bearer sessions in SQLite instead of using an in-memory `token_store`
+- Added additional tests for bearer-protected safe, member, audit log, and secret retrieval endpoints
 - Added audit log timestamps
 - Added a React/Vite frontend demo
 
 Planned next steps:
 
-- Persist sessions/tokens in SQLite
 - Add logout and token revocation
+- Add tests for logout and revoked sessions
 - Add token expiration
-- Add more tests for bearer-protected endpoints
+- Add tests for expired sessions
 - Add a PSM-like connection simulation
 - Add Docker support
 - Optionally migrate from SQLite to PostgreSQL or MySQL
