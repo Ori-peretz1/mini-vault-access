@@ -14,6 +14,8 @@ The project demonstrates backend API development, authentication, authorization,
 - Bearer token authentication
 - Secure random access token generation
 - SQLite-backed bearer sessions
+- Session revocation through logout
+- Token expiration with `expires_at`
 - Role-based authorization
 - Safes and safe members
 - Foreign keys and JOIN queries
@@ -21,6 +23,7 @@ The project demonstrates backend API development, authentication, authorization,
 - Audit logs for secret retrieval attempts, including timestamps
 - Swagger/OpenAPI documentation
 - React/Vite frontend demo
+- Frontend handling for expired or revoked tokens
 - Pytest tests
 - Ruff formatting/linting
 
@@ -134,10 +137,13 @@ The frontend is included as a visual fullstack demo for testing the backend flow
 4. Backend validates the password hash.
 5. Backend creates a secure random bearer token.
 6. Backend stores the token as a session in SQLite.
-7. Frontend sends the token in the Authorization header.
-8. Backend looks up the session by token.
-9. Backend identifies the current user from the session user_id.
-10. Backend verifies the user exists and is active.
+7. The session includes created_at, expires_at, and is_revoked.
+8. Frontend stores the token locally after login.
+9. Frontend sends the token in the Authorization header.
+10. Backend looks up the session by token.
+11. Backend rejects missing, revoked, expired, or malformed sessions.
+12. Backend identifies the current user from the session user_id.
+13. Backend verifies the user exists and is active.
 ```
 
 Example protected request:
@@ -177,6 +183,9 @@ The project includes examples of:
 - JOIN queries
 - Test cleanup order
 - Mapping database rows to Pydantic response models
+- SQLite-backed authentication sessions
+- Session revocation
+- Token expiration checks
 
 ## Project Status
 
@@ -195,11 +204,11 @@ Completed learning milestones:
 - Added a React/Vite frontend demo
 - Added logout and token revocation
 - Added tests for logout and revoked sessions
+- Added token expiration with `expires_at`
+- Added tests for expired sessions
+- Added frontend handling for expired or revoked tokens
 
 Planned next steps:
-
-- Add token expiration
-- Add tests for expired sessions
 - Add a PSM-like connection simulation
 - Add Docker support
 - Optionally migrate from SQLite to PostgreSQL or MySQL

@@ -190,16 +190,18 @@ def db_init():
     connection.close()
 
 
-def create_session_in_db(user_id: str, token: str, created_at: str) -> None:
+def create_session_in_db(
+    user_id: str, token: str, created_at: str, expires_at: str | None = None
+) -> None:
     connection = get_connection()
     cursor = connection.cursor()
     cursor.execute(
         """
-            INSERT INTO sessions (token,user_id,created_at,is_revoked)
-            VALUES(?,?,?,?)
+            INSERT INTO sessions (token, user_id, created_at, expires_at, is_revoked)
+            VALUES(?,?,?,?,?)
             
                    """,
-        (token, user_id, created_at, False),
+        (token, user_id, created_at, expires_at, False),
     )
     connection.commit()
     connection.close()
@@ -224,8 +226,8 @@ def get_session_from_db(token: str) -> SessionResponse | None:
         token=row[0],
         user_id=row[1],
         created_at=row[2],
-        expired_at=row[3],
-        is_revoked=row[4],
+        expires_at=row[3],
+        is_revoked=bool(row[4]),
     )
 
 

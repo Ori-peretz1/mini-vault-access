@@ -215,6 +215,26 @@ export default function App() {
     setStatus({ type: "error", message });
   }
 
+  function clearAuthState() {
+    localStorage.removeItem("miniVaultToken");
+    setToken("");
+    setCurrentUser(null);
+    setSafes([]);
+    setMembers([]);
+    setAccounts([]);
+    setAuditLogs([]);
+    setSecret(null);
+  }
+
+  function handleUnauthorized(path, message) {
+    if (path !== "/login") {
+      clearAuthState();
+      throw new Error("Session expired or revoked. Please log in again.");
+    }
+
+    throw new Error(message);
+  }
+
   async function request(path, options = {}) {
     const response = await fetch(`${API_BASE}${path}`, {
       ...options,
@@ -228,7 +248,13 @@ export default function App() {
     const data = text ? JSON.parse(text) : null;
 
     if (!response.ok) {
-      throw new Error(data?.detail || `Request failed with status ${response.status}`);
+      const message = data?.detail || `Request failed with status ${response.status}`;
+
+      if (response.status === 401) {
+        handleUnauthorized(path, message);
+      }
+
+      throw new Error(message);
     }
 
     return data;
@@ -288,16 +314,22 @@ export default function App() {
     if (data) setCurrentUser(data);
   }
 
-  function logout() {
-    localStorage.removeItem("miniVaultToken");
-    setToken("");
-    setCurrentUser(null);
-    setSafes([]);
-    setMembers([]);
-    setAccounts([]);
-    setAuditLogs([]);
-    setSecret(null);
-    showSuccess("Logged out locally");
+  async function logout() {
+    if (!token) {
+      clearAuthState();
+      showSuccess("Logged out locally");
+      return;
+    }
+
+    const data = await safeAction(
+      () => request("/logout", { method: "POST", headers: authHeaders }),
+      "Logged out successfully"
+    );
+
+    if (data) {
+      clearAuthState();
+      showSuccess(data.logout_msg || "Logged out successfully");
+    }
   }
 
   async function createSafe() {
@@ -413,7 +445,7 @@ export default function App() {
             </div>
             <button style={styles.button} onClick={login}>Login</button>
             <button style={styles.secondaryButton} onClick={loadMe}>Load /me</button>
-            <button style={styles.secondaryButton} onClick={logout}>Logout local</button>
+            <button style={styles.secondaryButton} onClick={logout}>Logout</button>
           </section>
 
           <section style={styles.fullCard}>

@@ -1,5 +1,6 @@
 import pytest
 from fastapi.testclient import TestClient
+from datetime import datetime, timezone, timedelta
 import main
 from database import (
     clear_users_table,
@@ -10,6 +11,7 @@ from database import (
     clear_audit_logs,
     clear_sessions_table,
     get_session_from_db,
+    create_session_in_db,
 )
 
 
@@ -538,3 +540,66 @@ def test_logout_with_wrong_token_returns_401():
     )
     assert logout_response.status_code == 401
     assert logout_response.json()["detail"] == "Wrong or expired token"
+
+
+def test_login_create_session_with_expires_at():
+    create_admin()
+    before_login = datetime.now(timezone.utc)
+
+    login_response = login()
+
+    after_login = datetime.now(timezone.utc)
+
+    assert login_response.status_code == 200
+    login_token = login_response.json()["access_token"]
+    session = get_session_from_db(login_token)
+    assert session is not None
+    assert session.expires_at is not None
+    assert session.is_revoked is False
+
+    expires_at = datetime.fromisoformat(session.expires_at)
+
+    expected_min_expires_at = before_login + timedelta(
+        minutes=main.TOKEN_SESSION_TIME_MINUTES
+    )
+    expected_max_expires_at = after_login + timedelta(
+        minutes=main.TOKEN_SESSION_TIME_MINUTES
+    )
+
+    assert expected_min_expires_at <= expires_at <= expected_max_expires_at
+
+
+def test_check_non_expired_token_can_acess_me():
+    create_admin()
+    login_response = login()
+    token = login_response.json()["access_token"]
+    assert login_response.status_code == 200
+    me_response = client.get("/me", headers={"Authorization": f"Bearer {token}"})
+    assert me_response.status_code == 200
+    assert me_response.json() == {
+        "id": "u_1",
+        "username": "Ori",
+        "role": "admin",
+        "state": "active",
+    }
+
+
+def test_check_expired_token_cannot_access_me():
+    create_admin()
+    token = "expired test token"
+    create_time = datetime.now(timezone.utc) - timedelta(minutes=31)
+    expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+    create_session_in_db(
+        user_id="u_1",
+        token=token,
+        created_at=create_time.isoformat(),
+        expires_at=expires_at.isoformat(),
+    )
+
+    me_response = client.get(
+        "/me",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert me_response.status_code == 401
+    assert me_response.json()["detail"] == "Wrong or expired token"

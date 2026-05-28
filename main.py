@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import hashlib
 import os
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from models import (
     AccountCreate,
     AccountResponse,
@@ -54,6 +54,7 @@ from database import (
     revoke_session_in_db,
 )
 
+TOKEN_SESSION_TIME_MINUTES = 30
 
 # next_account_id = 1  # step 5
 # next_audit_log_id = 1  # step 6
@@ -108,6 +109,23 @@ def check_current_user_by_token(
         raise HTTPException(
             status_code=401, detail="Wrong or expired token"
         )  # case when user logout already
+    if session.expires_at is not None:
+        try:
+            expires_at = datetime.fromisoformat(session.expires_at)
+
+        except ValueError:
+            raise HTTPException(status_code=401, detail="Wrong or expired token")
+
+        if expires_at <= datetime.now(timezone.utc):
+            raise HTTPException(
+                status_code=401,
+                detail="Wrong or expired token",
+            )
+    else:
+        raise HTTPException(
+            status_code=401,
+            detail="Wrong or expired token",
+        )
     user_id = session.user_id
     user = get_user_from_db(user_id)
     if user is None:
@@ -548,8 +566,13 @@ def login(login_req: LoginRequest) -> LoginResponse:
     ):
         raise HTTPException(status_code=401, detail="Invalid username or password")
     token = secrets.token_urlsafe(32)
+    created_at = datetime.now(timezone.utc)
+    expires_at = created_at + timedelta(minutes=TOKEN_SESSION_TIME_MINUTES)
     create_session_in_db(
-        user_id=user.id, token=token, created_at=datetime.now(timezone.utc).isoformat()
+        user_id=user.id,
+        token=token,
+        created_at=created_at.isoformat(),
+        expires_at=expires_at.isoformat(),
     )
     login_response = LoginResponse(access_token=token, token_type="bearer")
     return login_response
