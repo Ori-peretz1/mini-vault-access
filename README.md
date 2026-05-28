@@ -193,11 +193,11 @@ Completed learning milestones:
 - Added additional tests for bearer-protected safe, member, audit log, and secret retrieval endpoints
 - Added audit log timestamps
 - Added a React/Vite frontend demo
+- Added logout and token revocation
+- Added tests for logout and revoked sessions
 
 Planned next steps:
 
-- Add logout and token revocation
-- Add tests for logout and revoked sessions
 - Add token expiration
 - Add tests for expired sessions
 - Add a PSM-like connection simulation
