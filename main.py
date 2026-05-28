@@ -23,6 +23,7 @@ from models import (
     UserRecord,
     LoginRequest,
     LoginResponse,
+    LogoutResponse,
 )
 from database import (
     db_init,
@@ -50,6 +51,7 @@ from database import (
     get_all_audit_logs_from_db,
     create_session_in_db,
     get_session_from_db,
+    revoke_session_in_db,
 )
 
 
@@ -103,7 +105,9 @@ def check_current_user_by_token(
     if session is None:
         raise HTTPException(status_code=401, detail="Wrong or expired token")
     if session.is_revoked:
-        raise HTTPException(status_code=401, detail="Wrong or expired token")
+        raise HTTPException(
+            status_code=401, detail="Wrong or expired token"
+        )  # case when user logout already
     user_id = session.user_id
     user = get_user_from_db(user_id)
     if user is None:
@@ -549,3 +553,17 @@ def login(login_req: LoginRequest) -> LoginResponse:
     )
     login_response = LoginResponse(access_token=token, token_type="bearer")
     return login_response
+
+
+@app.post("/logout")
+def logout(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+) -> LogoutResponse:
+    user = get_user_by_token(credentials=credentials)
+    token = credentials.credentials
+    revoked = revoke_session_in_db(token=token)
+    if not revoked:
+        raise HTTPException(status_code=401, detail="Wrong or expired token")
+    return LogoutResponse(
+        user_id=user.id, logout_msg=f"{user.id} logged out successfully"
+    )

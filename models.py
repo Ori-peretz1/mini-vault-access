@@ -136,3 +136,8 @@ class SessionResponse(BaseModel):
     created_at: str
     expires_at: str | None = None
     is_revoked: bool
+
+
+class LogoutResponse(BaseModel):
+    user_id: str
+    logout_msg: str

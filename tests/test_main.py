@@ -477,3 +477,64 @@ def test_operator_cannot_get_members_of_safe():
 
     assert response.status_code == 403
     assert response.json()["detail"] == "Admin permission required"
+
+
+def test_revoke_update_session():
+    create_admin()
+    login_response = login()
+    assert login_response.status_code == 200
+    data = login_response.json()
+    assert data["token_type"] == "bearer"
+    assert isinstance(data["access_token"], str)
+    assert len(data["access_token"]) > 20
+    token = data["access_token"]
+    logout_response = client.post(
+        "/logout",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert logout_response.status_code == 200
+    assert logout_response.json()["user_id"] == "u_1"
+    assert logout_response.json()["logout_msg"] == "u_1 logged out successfully"
+    session = get_session_from_db(data["access_token"])
+
+    assert session is not None
+    assert session.is_revoked is True
+
+
+def test_logged_out_token_cannot_access_me():
+    create_admin()
+    login_response = login()
+    data = login_response.json()
+    token = data["access_token"]
+    assert login_response.status_code == 200
+    log_out_response = client.post(
+        "/logout",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert log_out_response.status_code == 200
+    assert log_out_response.json()["user_id"] == "u_1"
+    assert log_out_response.json()["logout_msg"] == "u_1 logged out successfully"
+    me_response = client.get("/me", headers={"Authorization": f"Bearer {token}"})
+    assert me_response.status_code == 401
+    assert me_response.json()["detail"] == "Wrong or expired token"
+
+
+def test_logout_without_token_returns_401():
+    create_admin()
+    login()
+    logout_response = client.post(
+        "/logout",
+    )
+    assert logout_response.status_code == 401
+    assert logout_response.json()["detail"] == "Missing authorization header"
+
+
+def test_logout_with_wrong_token_returns_401():
+    create_admin()
+    login()
+    logout_response = client.post(
+        "/logout", headers={"Authorization": "bearer invalid token"}
+    )
+    assert logout_response.status_code == 401
+    assert logout_response.json()["detail"] == "Wrong or expired token"

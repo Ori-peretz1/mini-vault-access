@@ -229,6 +229,26 @@ def get_session_from_db(token: str) -> SessionResponse | None:
     )
 
 
+def revoke_session_in_db(token: str) -> bool:
+    connection = get_connection()
+    cursor = connection.cursor()
+    cursor.execute(
+        """
+                    UPDATE sessions
+                    SET is_revoked =1
+                    WHERE token = ?
+                   """,
+        (token,),
+    )
+    updated_rows = cursor.rowcount
+
+    connection.commit()
+    connection.close()
+    return (
+        updated_rows > 0
+    )  # check if this action really worked or maybe there is no token like that
+
+
 def get_all_audit_logs_from_db() -> list[AuditLogResponse]:
     connection = get_connection()
     cursor = connection.cursor()
