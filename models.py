@@ -109,6 +109,25 @@ class AccountResponse(BaseModel):  # step 5
 
 class AuditAction(str, Enum):
     retrieve_secret = "retrieve_secret"
+    connect_account = "connect_account"
+
+
+class ConnectionStatus(str, Enum):
+    active = "active"
+    closed = "closed"
+
+
+class ConnectionSessionResponse(BaseModel):
+    connection_id: str
+    safe_id: str
+    account_id: str
+    actor_user_id: str
+    target: str
+    platform: AccountPlatform
+    started_at: str
+    ended_at: str | None = None
+    status: ConnectionStatus
+    message: str
 
 
 class AuditLogResponse(BaseModel):

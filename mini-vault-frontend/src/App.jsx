@@ -109,6 +109,17 @@ const styles = {
     marginRight: "8px",
     marginTop: "8px",
   },
+  warningButton: {
+    border: "1px solid rgba(251,191,36,0.45)",
+    borderRadius: "12px",
+    padding: "10px 14px",
+    background: "rgba(251,191,36,0.12)",
+    color: "#fde68a",
+    fontWeight: 700,
+    cursor: "pointer",
+    marginRight: "8px",
+    marginTop: "8px",
+  },
   statusSuccess: {
     border: "1px solid rgba(16,185,129,0.4)",
     background: "rgba(16,185,129,0.12)",
@@ -189,6 +200,7 @@ export default function App() {
   const [accounts, setAccounts] = useState([]);
   const [auditLogs, setAuditLogs] = useState([]);
   const [secret, setSecret] = useState(null);
+  const [connectionSession, setConnectionSession] = useState(null);
 
   const [registerForm, setRegisterForm] = useState({ username: "Ori", role: "admin", password: "123456" });
   const [loginForm, setLoginForm] = useState({ username: "Ori", password: "123456" });
@@ -224,6 +236,7 @@ export default function App() {
     setAccounts([]);
     setAuditLogs([]);
     setSecret(null);
+    setConnectionSession(null);
   }
 
   function handleUnauthorized(path, message) {
@@ -299,6 +312,7 @@ export default function App() {
       setAccounts([]);
       setAuditLogs([]);
       setSecret(null);
+      setConnectionSession(null);
 
       const me = await safeAction(
         () => request("/me", { headers: { Authorization: `Bearer ${newToken}` } }),
@@ -399,7 +413,27 @@ export default function App() {
         }),
       "Secret retrieved"
     );
-    if (data) setSecret(data);
+    if (data) {
+      setSecret(data);
+      setConnectionSession(null);
+    }
+  }
+
+  async function connectToAccount(accountId) {
+    const data = await safeAction(
+      () =>
+        request(`/safes/${selectedSafeId}/accounts/${accountId}/connect`, {
+          method: "POST",
+          headers: authHeaders,
+        }),
+      "Managed connection session started"
+    );
+
+    if (data) {
+      setSecret(null);
+      setConnectionSession(data);
+      await loadAuditLogs();
+    }
   }
 
   async function loadAuditLogs() {
@@ -484,8 +518,8 @@ export default function App() {
           </section>
 
           <section style={styles.card}>
-            <h2 style={styles.sectionTitle}>5. Accounts and secrets</h2>
-            <p style={styles.sectionText}>Create account metadata, then retrieve the secret.</p>
+            <h2 style={styles.sectionTitle}>5. Accounts, secrets and PSM connect</h2>
+            <p style={styles.sectionText}>Retrieve exposes the secret for learning. Connect starts a managed session without exposing the secret.</p>
             <div style={styles.row}>
               <Field label="Username" value={accountForm.username} onChange={(v) => setAccountForm({ ...accountForm, username: v })} />
               <Field label="Target" value={accountForm.target} onChange={(v) => setAccountForm({ ...accountForm, target: v })} />
@@ -499,11 +533,31 @@ export default function App() {
                 <strong>{account.username}</strong> | <span style={styles.code}>{account.id}</span> | {account.target} | {account.platform}
                 <br />
                 <button style={styles.secondaryButton} onClick={() => retrieveSecret(account.id)}>Retrieve secret</button>
+                <button style={styles.warningButton} onClick={() => connectToAccount(account.id)}>Connect without exposing secret</button>
               </div>
             ))}
             {secret && (
               <div style={styles.statusSuccess}>
                 Secret for <span style={styles.code}>{secret.account_id}</span>: <strong>{secret.secret_value}</strong>
+              </div>
+            )}
+            {connectionSession && (
+              <div style={styles.statusSuccess}>
+                <strong>Managed connection session started</strong>
+                <br />
+                Connection: <span style={styles.code}>{connectionSession.connection_id}</span>
+                <br />
+                Actor: <span style={styles.code}>{connectionSession.actor_user_id}</span>
+                <br />
+                Account: <span style={styles.code}>{connectionSession.account_id}</span>
+                <br />
+                Target: <span style={styles.code}>{connectionSession.target}</span>
+                <br />
+                Platform: <span style={styles.code}>{connectionSession.platform}</span>
+                <br />
+                Status: <span style={styles.code}>{connectionSession.status}</span>
+                <br />
+                Secret exposed: <span style={styles.code}>false</span>
               </div>
             )}
           </section>

@@ -12,6 +12,8 @@ from database import (
     clear_sessions_table,
     get_session_from_db,
     create_session_in_db,
+    clear_connections_table,
+    get_connection_from_db,
 )
 
 
@@ -24,6 +26,7 @@ client = TestClient(main.app)
 def reset_state():
     clear_audit_logs()
     clear_account_secrets_table()
+    clear_connections_table()
     clear_accounts_table()
     clear_sessions_table()
     clear_safe_members_table()
@@ -603,3 +606,139 @@ def test_check_expired_token_cannot_access_me():
 
     assert me_response.status_code == 401
     assert me_response.json()["detail"] == "Wrong or expired token"
+
+
+def test_admin_can_start_connection_session():
+    create_admin()
+    create_safe_as_admin()
+    create_account_as_admin(safe_id="s_1")
+    login_response = login()
+    token = login_response.json()["access_token"]
+    connection_response = client.post(
+        "/safes/s_1/accounts/a_1/connect", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert connection_response.status_code == 200
+    assert connection_response.json()["safe_id"] == "s_1"
+    assert connection_response.json()["status"] == "active"
+
+    connection = get_connection_from_db("connection_1")
+
+    assert connection is not None
+    assert connection.connection_id == "connection_1"
+    assert connection.safe_id == "s_1"
+    assert connection.account_id == "a_1"
+    assert connection.actor_user_id == "u_1"
+    assert connection.status.value == "active"
+
+
+def test_operator_with_use_permission_can_start_connection():
+    create_admin()
+    create_safe_as_admin()
+    create_operator()
+    create_account_as_admin(safe_id="s_1")
+    add_member_as_admin()
+    connection_response = client.post(
+        "/safes/s_1/accounts/a_1/connect", headers=auth_header(username="Bob")
+    )
+
+    assert connection_response.status_code == 200
+    assert connection_response.json()["safe_id"] == "s_1"
+    assert connection_response.json()["status"] == "active"
+
+    connection = get_connection_from_db("connection_1")
+    assert connection is not None
+    assert connection.connection_id == "connection_1"
+    assert connection.account_id == "a_1"
+    assert connection.actor_user_id == "u_2"
+    assert connection.status.value == "active"
+
+
+def test_operator_with_manage_permission_can_start_connection():
+    create_admin()
+    create_safe_as_admin()
+    create_operator()
+    create_account_as_admin(safe_id="s_1")
+    add_member_as_admin(permission_level="manage")
+    connection_response = client.post(
+        "/safes/s_1/accounts/a_1/connect", headers=auth_header(username="Bob")
+    )
+
+    assert connection_response.status_code == 200
+    assert connection_response.json()["safe_id"] == "s_1"
+    assert connection_response.json()["status"] == "active"
+
+    connection = get_connection_from_db("connection_1")
+    assert connection is not None
+    assert connection.connection_id == "connection_1"
+    assert connection.account_id == "a_1"
+    assert connection.actor_user_id == "u_2"
+    assert connection.status.value == "active"
+
+
+def test_successful_connect_creates_audit_log():
+    create_admin()
+    create_safe_as_admin()
+    create_operator()
+    create_account_as_admin(safe_id="s_1")
+    add_member_as_admin(permission_level="manage")
+    connection_response = client.post(
+        "/safes/s_1/accounts/a_1/connect", headers=auth_header(username="Bob")
+    )
+
+    assert connection_response.status_code == 200
+    assert connection_response.json()["safe_id"] == "s_1"
+    assert connection_response.json()["status"] == "active"
+
+    connection = get_connection_from_db("connection_1")
+    assert connection is not None
+    assert connection.connection_id == "connection_1"
+    assert connection.account_id == "a_1"
+    assert connection.actor_user_id == "u_2"
+    assert connection.status.value == "active"
+
+    audit_log_response = client.get("/audit-logs", headers=auth_header_for_admin())
+
+    assert audit_log_response.status_code == 200
+    logs = audit_log_response.json()
+    assert len(logs) == 1
+    assert logs[0]["actor_user_id"] == "u_2"
+    assert logs[0]["action"] == "connect_account"
+    assert logs[0]["safe_id"] == "s_1"
+    assert logs[0]["account_id"] == "a_1"
+    assert logs[0]["success"] is True
+    assert (
+        logs[0]["message"]
+        == "u_2 started connection session connection_1 for account a_1 without exposing the secret"
+    )
+
+
+def test_unauthorized_connect_creates_failed_audit_log():
+    create_admin()
+    create_safe_as_admin()
+    create_operator()
+    create_account_as_admin(safe_id="s_1")
+    add_member_as_admin(permission_level="read")
+
+    connection_response = client.post(
+        "/safes/s_1/accounts/a_1/connect", headers=auth_header(username="Bob")
+    )
+
+    assert connection_response.status_code == 403
+    assert connection_response.json()["detail"] == "Unauthorized"
+
+    log_response = client.get("/audit-logs", headers=auth_header(username="Bob"))
+
+    assert log_response.status_code == 403
+    assert log_response.json()["detail"] == "Only admin can get logs"
+
+    logs_res = client.get("/audit-logs", headers=auth_header_for_admin())
+
+    assert logs_res.status_code == 200
+    logs = logs_res.json()
+    assert len(logs) == 1
+    assert logs[0]["actor_user_id"] == "u_2"
+    assert logs[0]["action"] == "connect_account"
+    assert logs[0]["success"] is False
+    assert logs[0]["safe_id"] == "s_1"
+    assert logs[0]["account_id"] == "a_1"
+    assert logs[0]["message"] == "Unauthorized u_2 tried to connect to account a_1"

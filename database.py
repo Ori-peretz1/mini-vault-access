@@ -13,6 +13,8 @@ from models import (
     AuditLogResponse,
     AuditAction,
     SessionResponse,
+    ConnectionSessionResponse,
+    ConnectionStatus,
 )
 
 
@@ -86,6 +88,16 @@ def clear_sessions_table() -> None:
     cursor = connection.cursor()
     cursor.execute("""
                    DELETE FROM sessions
+                   """)
+    connection.commit()
+    connection.close()
+
+
+def clear_connections_table() -> None:
+    connection = get_connection()
+    cursor = connection.cursor()
+    cursor.execute("""
+                   DELETE FROM connections
                    """)
     connection.commit()
     connection.close()
@@ -186,8 +198,122 @@ def db_init():
         
                    )
                    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS connections(
+        connection_id TEXT PRIMARY KEY NOT NULL,
+        safe_id TEXT NOT NULL,
+        account_id TEXT NOT NULL,
+        actor_user_id TEXT NOT NULL,
+        target TEXT NOT NULL,
+        platform TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        ended_at TEXT,
+        status TEXT NOT NULL,
+        message TEXT NOT NULL,
+        FOREIGN KEY (safe_id) REFERENCES safes(id),
+        FOREIGN KEY (account_id) REFERENCES accounts(id),
+        FOREIGN KEY (actor_user_id) REFERENCES users(id)
+         )
+                       """)
     connection.commit()
     connection.close()
+
+
+def get_next_connection_id() -> int:
+    connection = get_connection()
+    cursor = connection.cursor()
+    cursor.execute("""  
+                   SELECT connection_id
+                   FROM connections
+                   ORDER BY CAST(SUBSTR(connection_id,12) AS INTEGER) DESC
+                   LIMIT 1
+                   """)
+    row = cursor.fetchone()
+    connection.close()
+    if row is None:
+        return 1
+
+    next_id = row[0]
+    last_number_id = int(next_id.split("_")[1])
+    return last_number_id + 1
+
+
+def create_connection_in_db(
+    connection_session: ConnectionSessionResponse,
+) -> None:
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        INSERT INTO connections (
+            connection_id,
+            safe_id,
+            account_id,
+            actor_user_id,
+            target,
+            platform,
+            started_at,
+            ended_at,
+            status,
+            message
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            connection_session.connection_id,
+            connection_session.safe_id,
+            connection_session.account_id,
+            connection_session.actor_user_id,
+            connection_session.target,
+            connection_session.platform.value,
+            connection_session.started_at,
+            connection_session.ended_at,
+            connection_session.status.value,
+            connection_session.message,
+        ),
+    )
+
+    connection.commit()
+    connection.close()
+
+
+def get_connection_from_db(connection_id: str) -> ConnectionSessionResponse | None:
+    connection = get_connection()
+    cursor = connection.cursor()
+    cursor.execute(
+        """
+    SELECT  connection_id,
+            safe_id,
+            account_id,
+            actor_user_id,
+            target,
+            platform,
+            started_at,
+            ended_at,
+            status,
+            message
+    FROM connections
+    where connection_id = ?
+""",
+        (connection_id,),
+    )
+    row = cursor.fetchone()
+    connection.close()
+    if row is None:
+        return None
+    return ConnectionSessionResponse(
+        connection_id=row[0],
+        safe_id=row[1],
+        account_id=row[2],
+        actor_user_id=row[3],
+        target=row[4],
+        platform=AccountPlatform(row[5]),
+        started_at=row[6],
+        ended_at=row[7],
+        status=ConnectionStatus(row[8]),
+        message=row[9],
+    )
 
 
 def create_session_in_db(

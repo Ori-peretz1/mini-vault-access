@@ -2,13 +2,13 @@
 
 Mini Vault is a learning backend and fullstack project inspired by privileged access management concepts.
 
-The project demonstrates backend API development, authentication, authorization, SQLite persistence, password hashing, audit logging, automated testing, and a browser-based frontend demo.
+The project demonstrates backend API development, authentication, authorization, SQLite persistence, password hashing, audit logging, automated testing, privileged session management simulation, and a browser-based frontend demo.
 
 ## Current Features
 
 - FastAPI backend
 - Pydantic request and response models
-- SQLite persistence for users, safes, safe members, accounts, account secrets, audit logs, and sessions
+- SQLite persistence for users, safes, safe members, accounts, account secrets, audit logs, authentication sessions, and connection sessions
 - User registration
 - Login with password hashing using scrypt and salt
 - Bearer token authentication
@@ -20,10 +20,13 @@ The project demonstrates backend API development, authentication, authorization,
 - Safes and safe members
 - Foreign keys and JOIN queries
 - Account metadata and secret retrieval flow
-- Audit logs for secret retrieval attempts, including timestamps
+- PSM-like managed connection simulation without exposing secrets
+- Connection session persistence in SQLite
+- Audit logs for secret retrieval and connection attempts, including timestamps
 - Swagger/OpenAPI documentation
 - React/Vite frontend demo
 - Frontend handling for expired or revoked tokens
+- Frontend support for PSM-like connect flow
 - Pytest tests
 - Ruff formatting/linting
 
@@ -124,7 +127,7 @@ python -m ruff check .
 
 The React frontend was generated and iteratively adapted with AI assistance.
 
-The main focus of this project is the backend implementation: FastAPI APIs, authentication, authorization, SQLite persistence, password hashing, audit logging, and automated tests.
+The main focus of this project is the backend implementation: FastAPI APIs, authentication, authorization, SQLite persistence, password hashing, audit logging, PSM-like connection simulation, and automated tests.
 
 The frontend is included as a visual fullstack demo for testing the backend flow through a browser interface.
 
@@ -152,15 +155,49 @@ Example protected request:
 Authorization: Bearer <access_token>
 ```
 
+## PSM-like Connection Flow
+
+```text
+1. User logs in and receives a bearer token.
+2. User selects an account inside a safe.
+3. User requests a managed connection session.
+4. Backend authenticates the user from the bearer token.
+5. Backend checks that the safe exists.
+6. Backend checks that the account exists and belongs to the safe.
+7. Backend checks that the account secret exists internally.
+8. Backend verifies that the user is allowed to connect.
+9. Backend creates a connection session in SQLite.
+10. Backend writes an audit log.
+11. Backend returns connection metadata without exposing the secret value.
+```
+
+Example connection request:
+
+```text
+POST /safes/{safe_id}/accounts/{account_id}/connect
+Authorization: Bearer <access_token>
+```
+
+Example concept:
+
+```text
+The user receives a managed connection session.
+The secret remains stored inside the backend and is not returned to the frontend.
+```
+
 ## Authorization Rules
 
 - Admin can create safes.
 - Admin can add safe members.
 - Admin can read audit logs.
+- Admin can retrieve secrets.
+- Admin can start managed connection sessions.
 - Operator can see safes where he is a member.
 - Operator with `use` or `manage` permission can retrieve secrets.
+- Operator with `use` or `manage` permission can start managed connection sessions.
 - Operator with `read` permission cannot retrieve secrets.
-- Auditor currently receives an empty safes list and cannot retrieve secrets.
+- Operator with `read` permission cannot start managed connection sessions.
+- Auditor currently receives an empty safes list, cannot retrieve secrets, and cannot start managed connection sessions.
 
 ## Database Persistence
 
@@ -174,7 +211,8 @@ Persisted entities:
 - Accounts
 - Account secrets
 - Audit logs
-- Sessions
+- Authentication sessions
+- Connection sessions
 
 The project includes examples of:
 
@@ -186,6 +224,7 @@ The project includes examples of:
 - SQLite-backed authentication sessions
 - Session revocation
 - Token expiration checks
+- PSM-like connection session persistence
 
 ## Project Status
 
@@ -207,11 +246,17 @@ Completed learning milestones:
 - Added token expiration with `expires_at`
 - Added tests for expired sessions
 - Added frontend handling for expired or revoked tokens
+- Added PSM-like connection simulation
+- Added SQLite persistence for managed connection sessions
+- Added tests for successful and unauthorized connection attempts
+- Added audit logging for managed connection attempts
+- Added frontend support for starting managed connection sessions without exposing secrets
 
 Planned next steps:
-- Add a PSM-like connection simulation
+
 - Add Docker support
 - Optionally migrate from SQLite to PostgreSQL or MySQL
+- Optionally re-implement selected concepts in Java
 
 ## Disclaimer
 

@@ -24,6 +24,8 @@ from models import (
     LoginRequest,
     LoginResponse,
     LogoutResponse,
+    ConnectionSessionResponse,
+    ConnectionStatus,
 )
 from database import (
     db_init,
@@ -52,6 +54,8 @@ from database import (
     create_session_in_db,
     get_session_from_db,
     revoke_session_in_db,
+    get_next_connection_id,
+    create_connection_in_db,
 )
 
 TOKEN_SESSION_TIME_MINUTES = 30
@@ -216,6 +220,24 @@ def can_retrieve_secret(
     return False
 
 
+def can_connect_to_account(user: UserResponse, safe_id: str) -> bool:
+    if user.role == UserRole.admin:
+        return True
+
+    if user.role == UserRole.operator:
+        safe_member = get_safe_member_from_db(safe_id, user.id)
+        if safe_member is None:
+            return False
+        permission = safe_member.permission_level
+        if (
+            permission == SafePermissionLevel.manage
+            or permission == SafePermissionLevel.use
+        ):  # by the set of rules i decided that operator with "use" permission level and auditor cant retrieve secret
+            return True
+
+    return False
+
+
 @app.get("/me")
 def get_user_by_token(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
@@ -293,6 +315,104 @@ def retrieve_secret(
         safe_id=safe_id,
         account_id=account_id,
     )
+    raise HTTPException(status_code=403, detail="Unauthorized")
+
+
+@app.post(
+    "/safes/{safe_id}/accounts/{account_id}/connect",
+    summary="Start a managed connection session without exposing the secret(PSM)",
+)
+def connect_to_account(
+    safe_id: str,
+    account_id: str,
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+) -> ConnectionSessionResponse:
+    actor_user = check_current_user_by_token(credentials=credentials)
+    if get_safe_from_db(safe_id) is None:
+        audit_log_create(
+            actor_id=actor_user.id,
+            action=AuditAction.connect_account,
+            success=False,
+            msg="Safe does not exist",
+            safe_id=safe_id,
+            account_id=account_id,
+        )
+
+        raise HTTPException(status_code=404, detail="Safe does not exist")
+    account = get_account_from_db(account_id=account_id)
+    if account is None:
+        audit_log_create(
+            actor_id=actor_user.id,
+            action=AuditAction.connect_account,
+            success=False,
+            msg="Account does not exist",
+            safe_id=safe_id,
+            account_id=account_id,
+        )
+        raise HTTPException(status_code=404, detail="Account does not exist")
+
+    if account.safe_id != safe_id:
+        audit_log_create(
+            actor_id=actor_user.id,
+            action=AuditAction.connect_account,
+            success=False,
+            msg="This account is not connected to this safe",
+            safe_id=safe_id,
+            account_id=account_id,
+        )
+
+        raise HTTPException(
+            status_code=404,
+            detail="This account is not connected to this safe",
+        )
+    secret_val = get_account_secret_from_db(account_id)
+    if secret_val is None:
+        audit_log_create(
+            actor_id=actor_user.id,
+            action=AuditAction.connect_account,
+            success=False,
+            msg="Secret does not exist",
+            safe_id=safe_id,
+            account_id=account_id,
+        )
+        raise HTTPException(status_code=404, detail="Secret does not exist")
+
+    if can_connect_to_account(user=actor_user, safe_id=safe_id):
+        id_number = get_next_connection_id()
+        id = f"connection_{id_number}"
+
+        connection_response = ConnectionSessionResponse(
+            connection_id=id,
+            safe_id=safe_id,
+            account_id=account_id,
+            actor_user_id=actor_user.id,
+            target=account.target,
+            platform=account.platform,
+            started_at=datetime.now(timezone.utc).isoformat(),
+            ended_at=None,
+            status=ConnectionStatus.active,
+            message=f"Connection session started for account {account_id} without exposing the secret",
+        )
+        create_connection_in_db(connection_response)
+        audit_log_create(
+            actor_id=actor_user.id,
+            action=AuditAction.connect_account,
+            success=True,
+            msg=f"{actor_user.id} started connection session {id} for account {account_id} without exposing the secret",
+            safe_id=safe_id,
+            account_id=account_id,
+        )
+        return connection_response
+
+    audit_log_create(
+        actor_id=actor_user.id,
+        action=AuditAction.connect_account,
+        success=False,
+        msg=f"Unauthorized {actor_user.id} tried to connect to account {account_id}",
+        safe_id=safe_id,
+        account_id=account_id,
+    )
+
     raise HTTPException(status_code=403, detail="Unauthorized")
 
 
