@@ -1,0 +1,10 @@
+services:
+  backend:
+    build: .
+    container_name: mini-vault-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - DB_FILE=/app/data/mini_vault.db
+    volumes:
+      - ./data:/app/data

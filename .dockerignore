@@ -1,0 +1,15 @@
+.venv
+__pycache__
+.pytest_cache
+.ruff_cache
+.git
+.gitignore
+node_modules
+dist
+mini-vault-frontend/node_modules
+mini-vault-frontend/dist
+mini_vault.db
+*.pyc
+*.pyo
+*.pyd
+.env

@@ -1,4 +1,5 @@
 import sqlite3
+import os
 from models import (
     UserRole,
     UserResponse,
@@ -18,7 +19,10 @@ from models import (
 )
 
 
-DB_FILE = "mini_vault.db"
+# DB_FILE = "mini_vault.db"
+DB_FILE = os.getenv(
+    "DB_FILE", "mini_vault.db"
+)  # for docker support ,now it can both locally and in container
 
 
 def clear_users_table() -> None:  # helper function for tests
