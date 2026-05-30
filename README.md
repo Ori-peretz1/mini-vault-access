@@ -2,7 +2,7 @@
 
 Mini Vault is a learning backend and fullstack project inspired by privileged access management concepts.
 
-The project demonstrates backend API development, authentication, authorization, SQLite persistence, password hashing, audit logging, automated testing, privileged session management simulation, Docker-based backend execution, and a browser-based frontend demo.
+The project demonstrates backend API development, authentication, authorization, SQLite persistence, password hashing, audit logging, automated testing, privileged session management simulation, Docker-based backend and frontend execution, and a browser-based frontend demo.
 
 ## Current Features
 
@@ -28,7 +28,8 @@ The project demonstrates backend API development, authentication, authorization,
 - Frontend handling for expired or revoked tokens
 - Frontend support for PSM-like connect flow
 - Docker support for the FastAPI backend
-- Docker Compose support for running the backend
+- Docker support for the React/Vite frontend
+- Docker Compose support for running the fullstack app
 - Persistent SQLite storage through a Docker-mounted `data/` folder
 - Pytest tests
 - Ruff formatting/linting
@@ -52,6 +53,8 @@ The project demonstrates backend API development, authentication, authorization,
 - Vite
 - JavaScript
 - CSS-in-JS styling
+- Node.js
+- Docker
 
 ## Project Structure
 
@@ -69,6 +72,8 @@ Mini-Vault/
 ├── tests/
 │   └── test_main.py
 ├── mini-vault-frontend/
+│   ├── Dockerfile
+│   ├── .dockerignore
 │   ├── src/
 │   │   └── App.jsx
 │   ├── package.json
@@ -99,67 +104,7 @@ The backend API runs at:
 http://127.0.0.1:8000
 ```
 
-## Run the Backend with Docker Compose
-
-From the project root:
-
-```bash
-docker compose up --build
-```
-
-Then open:
-
-```text
-http://127.0.0.1:8000/docs
-```
-
-Health check:
-
-```text
-http://127.0.0.1:8000/health
-```
-
-The Docker Compose setup:
-
-- Builds the FastAPI backend image from the project `Dockerfile`
-- Runs the backend container on port `8000`
-- Sets `DB_FILE=/app/data/mini_vault.db`
-- Mounts the local `./data` folder into the container at `/app/data`
-- Persists the SQLite database outside the container
-
-To stop the container while running in the foreground:
-
-```text
-Ctrl + C
-```
-
-To run in the background:
-
-```bash
-docker compose up -d --build
-```
-
-To view logs:
-
-```bash
-docker compose logs backend
-```
-
-To follow logs live:
-
-```bash
-docker compose logs -f backend
-```
-
-To stop and remove the Compose-managed container:
-
-```bash
-docker compose down
-```
-
-The persisted SQLite database remains in the local `data/` folder.
-
-## Run the Frontend
+## Run the Frontend Locally
 
 From the project root:
 
@@ -181,7 +126,80 @@ Make sure the FastAPI backend is also running at:
 http://127.0.0.1:8000
 ```
 
-The frontend currently runs locally through Vite. The backend can run either locally with Uvicorn or through Docker Compose.
+## Run the Fullstack App with Docker Compose
+
+From the project root:
+
+```bash
+docker compose up --build
+```
+
+Then open the frontend:
+
+```text
+http://127.0.0.1:5173
+```
+
+Backend Swagger/OpenAPI documentation:
+
+```text
+http://127.0.0.1:8000/docs
+```
+
+Backend health check:
+
+```text
+http://127.0.0.1:8000/health
+```
+
+The Docker Compose setup:
+
+- Builds the FastAPI backend image from the root `Dockerfile`
+- Builds the React/Vite frontend image from `mini-vault-frontend/Dockerfile`
+- Runs the backend container on port `8000`
+- Runs the frontend container on port `5173`
+- Sets `DB_FILE=/app/data/mini_vault.db` for the backend container
+- Mounts the local `./data` folder into the backend container at `/app/data`
+- Persists the SQLite database outside the backend container
+- Starts the backend before the frontend using Docker Compose service dependencies
+
+To stop the containers while running in the foreground:
+
+```text
+Ctrl + C
+```
+
+To run in the background:
+
+```bash
+docker compose up -d --build
+```
+
+To view backend logs:
+
+```bash
+docker compose logs backend
+```
+
+To view frontend logs:
+
+```bash
+docker compose logs frontend
+```
+
+To follow all logs live:
+
+```bash
+docker compose logs -f
+```
+
+To stop and remove the Compose-managed containers:
+
+```bash
+docker compose down
+```
+
+The persisted SQLite database remains in the local `data/` folder.
 
 ## Run Tests
 
@@ -202,7 +220,7 @@ python -m ruff check .
 
 The React frontend was generated and iteratively adapted with AI assistance.
 
-The main focus of this project is the backend implementation: FastAPI APIs, authentication, authorization, SQLite persistence, password hashing, audit logging, PSM-like connection simulation, Docker backend support, and automated tests.
+The main focus of this project is the backend implementation: FastAPI APIs, authentication, authorization, SQLite persistence, password hashing, audit logging, PSM-like connection simulation, Docker support, and automated tests.
 
 The frontend is included as a visual fullstack demo for testing the backend flow through a browser interface.
 
@@ -264,12 +282,25 @@ The secret remains stored inside the backend and is not returned to the frontend
 
 ```text
 1. Docker Compose starts the backend container.
-2. Docker Compose sets DB_FILE=/app/data/mini_vault.db inside the container.
-3. Docker Compose mounts the local ./data folder to /app/data inside the container.
+2. Docker Compose sets DB_FILE=/app/data/mini_vault.db inside the backend container.
+3. Docker Compose mounts the local ./data folder to /app/data inside the backend container.
 4. The backend reads DB_FILE from the environment.
 5. SQLite creates or opens /app/data/mini_vault.db.
 6. The actual database file is stored on the host machine under ./data/mini_vault.db.
-7. The container can be stopped or removed while the database file remains on the host.
+7. The backend container can be stopped or removed while the database file remains on the host.
+```
+
+## Docker Fullstack Flow
+
+```text
+1. Docker Compose starts the backend service.
+2. Docker Compose starts the frontend service.
+3. The frontend container serves the React/Vite app on port 5173.
+4. The browser opens http://127.0.0.1:5173.
+5. The browser runs the React JavaScript code.
+6. The React app sends API requests to http://127.0.0.1:8000.
+7. Docker forwards port 8000 on the host to the backend container.
+8. The backend handles the API requests and returns responses to the browser.
 ```
 
 ## Authorization Rules
@@ -343,11 +374,13 @@ Completed learning milestones:
 - Added Docker Compose support for backend startup
 - Added persistent SQLite storage using a Docker-mounted `data/` folder
 - Added environment-based database file configuration through `DB_FILE`
+- Added Docker support for the React/Vite frontend
+- Added Docker Compose support for running the backend and frontend together
+- Verified the full browser flow through Docker Compose
 
 Planned next steps:
 
-- Optionally add Docker support for the React/Vite frontend
-- Optionally migrate from SQLite to PostgreSQL or MySQL 
+- Optionally migrate from SQLite to PostgreSQL or MySQL
 - Optionally re-implement selected concepts in Java
 
 ## Disclaimer

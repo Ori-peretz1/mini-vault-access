@@ -8,3 +8,12 @@ services:
       - DB_FILE=/app/data/mini_vault.db
     volumes:
       - ./data:/app/data
+
+  frontend:
+    build:
+      context: ./mini-vault-frontend
+    container_name: mini-vault-frontend
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend #making sure the backend runs first
